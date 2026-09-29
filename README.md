@@ -99,6 +99,14 @@ Because Incoming can be shared over the local network, office staff can save lab
 
 Carrier acceptance must still be validated with physical print-and-scan testing. Changing the geometry of a carrier label can be subject to carrier-specific rules.
 
+### Carrier requirements and liability
+
+Shipping-label requirements vary by courier, service, and region, and may change. Users are responsible for checking the applicable courier's current requirements and testing each label layout and barcode before shipping.
+
+In Bytedev.app's local testing, every shipment using a ReLabel-produced label was accepted by the local couriers tested—a 100% ship rate for that test group. This limited experience does not guarantee that other labels or shipments will be accepted, delivered, or free from additional charges.
+
+ReLabel is provided "as is" under the [MIT License](LICENSE). To the extent permitted by applicable law, Bytedev.app and ReLabel's contributors are not liable for labels refused by couriers or for resulting delays, replacement-label costs, surcharges, penalties, or other charges.
+
 ## Printer Support
 
 ReLabel supports compatible **4-inch Zebra label printers that understand ZPL or ZPL II**. It does not depend on a particular connection type or printer network address; output is submitted as RAW ZPL through the selected Windows printer queue.
@@ -327,6 +335,12 @@ The solution contains:
 - **ReLabel.Tests:** automated regression and behavior tests.
 
 The release build restores dependencies, runs the test suite, and publishes a self-contained Windows x64 application. The installer build packages that publish output with Inno Setup.
+
+## License and contributions
+
+ReLabel is open source under the [MIT License](LICENSE). You may use, modify, and build upon it, including for commercial projects, provided you keep the copyright and license notice with copies or substantial portions of the software. Third-party dependencies retain their own licenses.
+
+Code contributions are welcome through pull requests. By submitting a contribution, you agree to license it under the same MIT License; please include tests for behavior changes when practical.
 
 <hr>
 
