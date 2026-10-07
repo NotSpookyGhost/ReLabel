@@ -52,7 +52,8 @@ public sealed class BarcodeInspector
         return results
             .Where(result => !string.IsNullOrWhiteSpace(result.Text))
             .GroupBy(result => (result.BarcodeFormat, result.Text))
-            .Select(group => ToRegion(group.First(), image))
+            .Select(group => ToRegion(group.OrderByDescending(result =>
+                result.ResultPoints?.Count(point => point is not null) ?? 0).First(), image))
             .ToArray();
     }
 
@@ -107,11 +108,13 @@ public sealed class BarcodeInspector
         return width * height / (double)Math.Max(1, second.Area);
     }
 
-    private static BarcodeRegion ToRegion(Result result, GrayImage image)
+    internal static BarcodeRegion ToRegion(Result result, GrayImage image)
     {
         var imageWidth = image.Width;
         var imageHeight = image.Height;
-        var points = result.ResultPoints ?? [];
+        // Some decoders return a populated result-point array with null entries.
+        // Keep the valid geometry instead of failing preparation for the entire label.
+        var points = (result.ResultPoints ?? []).Where(point => point is not null).ToArray();
         if (points.Length == 0)
             return new BarcodeRegion(result.Text, result.BarcodeFormat, new PixelRect(0, 0, imageWidth, imageHeight));
 

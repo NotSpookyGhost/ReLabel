@@ -17,7 +17,8 @@ public sealed record DefinedLayoutRegion(
     bool Barcode = false,
     bool StretchToDestination = false,
     int ZOrder = 0,
-    GrayImage? ContentOverride = null);
+    GrayImage? ContentOverride = null,
+    bool StripSourceHeaderFragment = false);
 
 public enum LabelFitMode
 {
@@ -76,6 +77,8 @@ public sealed class LabelComposer(BarcodeInspector barcodeInspector)
         foreach (var region in regions.OrderBy(x => x.ZOrder))
         {
             var crop = region.ContentOverride ?? source.Crop(region.Source);
+            if (region.StripSourceHeaderFragment && region.ContentOverride is null)
+                StripPartialHeaderFromAddress(crop, source.Width, source.Height);
             if (region.Required && ImageAnalysis.FindContentBounds(crop, padding: 0).IsEmpty)
                 return Fallback(source, null, canvasWidth, canvasHeight, targetDpi, marginInches,
                     quality, $"template-required-zone-blank:{region.Name}");
@@ -122,6 +125,47 @@ public sealed class LabelComposer(BarcodeInspector barcodeInspector)
             return Fallback(source, null, canvasWidth, canvasHeight, targetDpi, marginInches,
                 quality, "template-barcode-verification-failed");
         return new CompositionResult(canvas, false, null, barcodeDestinations);
+    }
+
+    internal static void StripPartialHeaderFromAddress(GrayImage crop, int sourceWidth, int sourceHeight)
+    {
+        // A source address box can begin inside the printed FROM/TO header. When a
+        // generated header is also placed, that partial black strip is duplicated.
+        // Only remove it if a wide, dense strip is followed by a blank separator.
+        var minimumRun = Math.Max(20, sourceWidth / 20);
+        var probeHeight = Math.Min(crop.Height, Math.Max(2, sourceHeight / 100));
+        var denseRows = 0;
+        var firstDenseRow = -1;
+        for (var y = 0; y < probeHeight; y++)
+        {
+            var longestRun = 0;
+            var run = 0;
+            for (var x = 0; x < crop.Width; x++)
+            {
+                run = crop[x, y] < 100 ? run + 1 : 0;
+                longestRun = Math.Max(longestRun, run);
+            }
+            if (longestRun < minimumRun) continue;
+            firstDenseRow = firstDenseRow < 0 ? y : firstDenseRow;
+            denseRows++;
+        }
+        if (denseRows < 2) return;
+
+        var scanHeight = Math.Min(crop.Height, Math.Max(probeHeight + 2, sourceHeight / 40));
+        for (var y = firstDenseRow + 1; y + 1 < scanHeight; y++)
+        {
+            if (!IsNearlyBlankRow(crop, y) || !IsNearlyBlankRow(crop, y + 1)) continue;
+            Array.Fill(crop.Pixels, (byte)255, 0, (y + 2) * crop.Width);
+            return;
+        }
+    }
+
+    private static bool IsNearlyBlankRow(GrayImage image, int y)
+    {
+        var dark = 0;
+        for (var x = 0; x < image.Width; x++)
+            if (image[x, y] < 235 && ++dark > Math.Max(1, image.Width / 100)) return false;
+        return true;
     }
 
     private bool VerifyMarkedBarcodes(GrayImage source, GrayImage output,

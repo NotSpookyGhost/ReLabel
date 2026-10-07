@@ -8,6 +8,20 @@ namespace ShipTime4x4.Tests;
 public sealed class BarcodeInspectorTests
 {
     [Fact]
+    public void NullDecoderPointsDoNotPreventBarcodeBoundsFromBeingCalculated()
+    {
+        var decoded = new Result("TEST-CODE", null,
+            [null!, new ResultPoint(20, 50), new ResultPoint(180, 50)], BarcodeFormat.CODE_128);
+
+        var region = BarcodeInspector.ToRegion(decoded, GrayImage.White(240, 120));
+
+        Assert.Equal("TEST-CODE", region.Value);
+        Assert.InRange(region.Bounds.X, 0, 20);
+        Assert.InRange(region.Bounds.Right, 180, 240);
+        Assert.True(region.Bounds.Height > 0);
+    }
+
+    [Fact]
     public void DetectsTwoIndependentBarcodePayloads()
     {
         var label = GrayImage.White(500, 700);

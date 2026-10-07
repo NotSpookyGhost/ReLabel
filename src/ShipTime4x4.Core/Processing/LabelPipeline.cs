@@ -114,6 +114,14 @@ public sealed class LabelPipeline
             ? enhanced : page;
         var composition = _composer.ComposeDefined(compositionSource, regions, targetDpi, marginInches,
             widthInches, heightInches, fitMode, quality);
+        if (composition.UsedFallback && !ImageAnalysis.FindContentBounds(page).IsEmpty)
+        {
+            var fallback = Prepare(page, sourceDpi, targetDpi, marginInches, widthInches,
+                heightInches, fitMode, rotation, quality, darkness, speedIps,
+                barcodeCompensation, textEnhancement, addressRegions,
+                fromAddressScalePercent, toAddressScalePercent);
+            return fallback with { UsedFallback = true, WarningCode = composition.WarningCode };
+        }
         var finalBarcodeRegions = TransformRegionsForRotation(composition.BarcodeRegions ?? [],
             composition.Image.Width, composition.Image.Height, rotation, targetDpi, marginInches);
         var output = ApplyRotation(composition.Image, rotation, targetDpi, marginInches, quality);

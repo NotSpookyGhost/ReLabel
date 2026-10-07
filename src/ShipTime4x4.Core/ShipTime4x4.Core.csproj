@@ -4,5 +4,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ZXing.Net" Version="0.16.11" />
+    <InternalsVisibleTo Include="ShipTime4x4.Tests" />
   </ItemGroup>
 </Project>

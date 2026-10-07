@@ -196,6 +196,59 @@ public sealed class CarrierTemplateTests : IDisposable
     }
 
     [Fact]
+    public void FailedTemplateUsesTheConfiguredGeneralizedFitting()
+    {
+        var page = GrayImage.White(800, 1200);
+        for (var y = 60; y < 180; y++)
+        for (var x = 40; x < 760; x++) page[x, y] = 0;
+        var regions = new[]
+        {
+            new DefinedLayoutRegion(new PixelRect(20, 400, 100, 50),
+                new NormalizedLayoutRect(.05, .05, .4, .2), BlockPriority.Required, false, true)
+        };
+        var pipeline = new LabelPipeline();
+
+        var direct = pipeline.Prepare(page, 203, 203, .125, 4, 4,
+            LabelFitMode.SquishToFill, LabelRotation.None, PrintQualityPreset.Standard,
+            10, 4, RotatedBarcodeCompensation.Off, TextEnhancement.Off);
+        var templated = pipeline.PrepareDefined(page, 203, 203, .125, 4, 4,
+            LabelFitMode.SquishToFill, LabelRotation.None, PrintQualityPreset.Standard,
+            10, 4, RotatedBarcodeCompensation.Off, TextEnhancement.Off,
+            regions, [], 100, 100);
+
+        Assert.True(templated.UsedFallback);
+        Assert.Equal("template-required-zone-blank:required zone", templated.WarningCode);
+        Assert.Equal(direct.Image.Pixels, templated.Image.Pixels);
+    }
+
+    [Fact]
+    public void PartialSourceHeaderIsRemovedWithoutErasingAddressText()
+    {
+        var crop = GrayImage.White(320, 180);
+        for (var y = 1; y < 10; y++)
+        for (var x = 0; x < 160; x++) crop[x, y] = 0;
+        for (var y = 14; y < 30; y++)
+        for (var x = 20; x < 32; x++) crop[x, y] = 0;
+
+        LabelComposer.StripPartialHeaderFromAddress(crop, 1200, 1800);
+
+        Assert.All(crop.Pixels.Take(14 * crop.Width), pixel => Assert.Equal((byte)255, pixel));
+        Assert.Equal((byte)0, crop[25, 20]);
+    }
+
+    [Fact]
+    public void AddressTextWithoutHeaderRemnantIsPreserved()
+    {
+        var crop = GrayImage.White(320, 180);
+        for (var y = 1; y < 10; y++)
+        for (var x = 20; x < 32; x++) crop[x, y] = 0;
+
+        LabelComposer.StripPartialHeaderFromAddress(crop, 1200, 1800);
+
+        Assert.Equal((byte)0, crop[25, 5]);
+    }
+
+    [Fact]
     public void ContentDetectorRecognizesVisibleRequiredZoneContentWithZeroPadding()
     {
         var page = GrayImage.White(800, 1200);

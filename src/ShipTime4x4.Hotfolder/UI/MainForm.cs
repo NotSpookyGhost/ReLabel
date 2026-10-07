@@ -85,7 +85,7 @@ public sealed class MainForm : Form
             Image = LoadBrandImage(), BackColor = Color.Transparent
         };
         var version = typeof(MainForm).Assembly.GetName().Version;
-        var versionText = version is null ? "Version 2.4.3" : $"Version {version.Major}.{version.Minor}.{version.Build}";
+        var versionText = version is null ? "Version 2.4.4" : $"Version {version.Major}.{version.Minor}.{version.Build}";
         var brandText = new BrandTextControl(versionText)
         {
             Location = new Point(72, 3), Size = new Size(260, 66), BackColor = Color.Transparent

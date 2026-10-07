@@ -12,7 +12,7 @@
   Windows 11 &nbsp;|&nbsp; Local processing &nbsp;|&nbsp; Zebra RAW ZPL &nbsp;|&nbsp; 203, 300, and 600 DPI
 </p>
 
-ReLabel watches a folder for PDF shipping labels, keeps the originals organized, produces a print-accurate preview, and sends optimized ZPL directly to an existing Zebra Windows queue. The current release is **2.4.3**.
+ReLabel watches a folder for PDF shipping labels, keeps the originals organized, produces a print-accurate preview, and sends optimized ZPL directly to an existing Zebra Windows queue. The current release is **2.4.4**.
 
 ![A 4 x 6 source label passing through the ReLabel dashboard to produce a final 4 x 4 label](docs/images/relabel-dashboard.png)
 
@@ -143,7 +143,7 @@ Passing the quality test confirms basic communication and raster output. Carrier
 
 ## Install
 
-The current installer is [ReLabel-Setup-2.4.3.exe](artifacts/installer/ReLabel-Setup-2.4.3.exe).
+The current installer is [ReLabel-Setup-2.4.4.exe](artifacts/installer/ReLabel-Setup-2.4.4.exe).
 
 1. Copy the installer to the shipping workstation.
 2. Close ReLabel if it is running.
@@ -152,7 +152,7 @@ The current installer is [ReLabel-Setup-2.4.3.exe](artifacts/installer/ReLabel-S
 From PowerShell:
 
 ```powershell
-Start-Process .\ReLabel-Setup-2.4.3.exe -Verb RunAs
+Start-Process .\ReLabel-Setup-2.4.4.exe -Verb RunAs
 ```
 
 The installer includes the required Microsoft Visual C++ runtime and creates desktop and Start Menu shortcuts.
@@ -284,7 +284,7 @@ Uninstalling removes ReLabel and its shortcuts while preserving user settings an
 
 ## Planned Features
 
-The following items describe the intended direction for future ReLabel releases. They are roadmap concepts, not capabilities included in version 2.4.3, and their final design may change after printer, carrier, and platform testing.
+The following items describe the intended direction for future ReLabel releases. They are roadmap concepts, not capabilities included in version 2.4.4, and their final design may change after printer, carrier, and platform testing.
 
 ### Wider label-size support
 

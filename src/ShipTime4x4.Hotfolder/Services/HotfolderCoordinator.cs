@@ -959,7 +959,7 @@ public sealed class HotfolderCoordinator : IDisposable
             _configuration.PrintSpeedIps, record.OutputWidthInches, record.OutputHeightInches,
             record.FitMode, rotation, compensation, record.TextEnhancement,
             record.EffectiveFromAddressScalePercent, record.EffectiveToAddressScalePercent,
-            ignoreTemplate ? "no-template" : record.AppliedTemplate?.Hash ?? "no-template", "cache-v6");
+            ignoreTemplate ? "no-template" : record.AppliedTemplate?.Hash ?? "no-template", "cache-v7");
     }
 
     private void TrimPreparedCache(string currentKey)

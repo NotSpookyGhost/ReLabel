@@ -142,13 +142,19 @@ public sealed class PdfLabelProcessor
             var usableZones = isFourByFour
                 ? template.Zones.Where(zone => zone.IsPlaced4x4).ToArray()
                 : template.Zones.Where(zone => zone.HasSourceRegion).ToArray();
+            var hasFromHeader = usableZones.Any(zone => zone.Type == TemplateZoneType.BuiltInAsset &&
+                zone.BuiltInAsset == TemplateBuiltInAssetKind.FromDe);
+            var hasToHeader = usableZones.Any(zone => zone.Type == TemplateZoneType.BuiltInAsset &&
+                zone.BuiltInAsset == TemplateBuiltInAssetKind.ToA);
             var regions = usableZones.Select((zone, zOrder) => new DefinedLayoutRegion(
                 zone.HasSourceRegion ? zone.Source.ToPixels(page.Width, page.Height) : new PixelRect(0, 0, 1, 1),
                 isFourByFour ? ToInnerDestination(zone.Destination4x4) : null,
                 Priority(zone), PreserveAspect(zone), Required(zone), zone.DisplayName,
                 zone.Type is TemplateZoneType.CarrierBarcode or TemplateZoneType.ShippingBarcode,
                 zone.Type == TemplateZoneType.ShippingBarcode || zone.IsGenerated,
-                zOrder, zone.IsGenerated ? TemplateGeneratedContent.Render(zone, sourceDpi) : null)).ToArray();
+                zOrder, zone.IsGenerated ? TemplateGeneratedContent.Render(zone, sourceDpi) : null,
+                zone.Type == TemplateZoneType.FromAddress && hasFromHeader ||
+                zone.Type == TemplateZoneType.ToAddress && hasToHeader)).ToArray();
             var addresses = usableZones
                 .Where(zone => zone.Type is TemplateZoneType.FromAddress or TemplateZoneType.ToAddress)
                 .Select(zone => zone.Source.ToPixels(page.Width, page.Height)).ToArray();
