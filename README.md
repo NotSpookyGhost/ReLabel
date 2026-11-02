@@ -335,7 +335,7 @@ See the [2.4.5 release notes](RELEASE_NOTES_2.4.5.md) for upgrade guidance.
 
 ### Verify your download
 
-The initial v2.4.5 release installer was built and tested locally. It is **unsigned and not GitHub-attested**. To check that its download matches the supplied checksum, download both release assets into the same folder and run:
+The v2.4.5 release installer now comes from the [successful GitHub build](https://github.com/NotSpookyGhost/ReLabel/actions/runs/41495300297) and has a **verified GitHub build attestation**. It replaces the original locally built installer, so its checksum has changed. Download both current release assets into the same folder and check them with:
 
 ```powershell
 $expected = ((Get-Content .\ReLabel-Setup-2.4.5.exe.sha256) -split '\s+')[0]
@@ -343,7 +343,7 @@ $actual = (Get-FileHash .\ReLabel-Setup-2.4.5.exe -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw 'Installer checksum mismatch. Do not run this file.' }
 ```
 
-The release workflow generates free GitHub/Sigstore build attestations for installers built on GitHub. Those are separate workflow artifacts, not an attestation of the locally built release asset. For an installer downloaded from a successful **Verified installer** workflow, use:
+The release workflow generates free GitHub/Sigstore build attestations for installers built on GitHub. The current v2.4.5 release EXE is the exact attested workflow artifact. With GitHub CLI installed, verify the release download using:
 
 ```powershell
 gh attestation verify .\ReLabel-Setup-2.4.5.exe --repo NotSpookyGhost/ReLabel
