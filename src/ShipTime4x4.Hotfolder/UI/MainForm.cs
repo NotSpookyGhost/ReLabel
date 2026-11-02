@@ -19,6 +19,8 @@ public sealed class MainForm : Form
     private readonly Button _readyTab = new();
     private readonly Button _printedTab = new();
     private readonly Button _dateSort = new();
+    private readonly Button _printAll = new();
+    private readonly Button _settings = new();
     private readonly Label _readyCount = new();
     private readonly Label _activity = new();
     private readonly Panel _activityDot = new();
@@ -35,12 +37,20 @@ public sealed class MainForm : Form
     private readonly Label _empty = new();
     private readonly Label _printerStatus = new();
     private readonly ToolTip _toolTips = new();
+    private readonly PdfDropOverlay _dropOverlay = new();
+    private readonly System.Windows.Forms.Timer _dropLeaveTimer = new() { Interval = 150 };
     private CancellationTokenSource? _previewCancellation;
     private Guid? _selectedId;
     private bool _showPrinted;
     private bool _oldestFirst;
     private Guid? _printingId;
     private string? _printingMessage;
+    private bool _manualPrintActive;
+    private bool _batchRunning;
+    private bool _batchStopRequested;
+    private int _batchIndex;
+    private int _batchTotal;
+    private bool _dropImportActive;
 
     public MainForm(HotfolderCoordinator coordinator)
     {
@@ -54,6 +64,11 @@ public sealed class MainForm : Form
         Font = new Font("Segoe UI", 9.5f);
         BackColor = Canvas;
         BuildLayout();
+        _dropOverlay.Bounds = ClientRectangle;
+        Controls.Add(_dropOverlay);
+        ClientSizeChanged += (_, _) => _dropOverlay.Bounds = ClientRectangle;
+        _dropLeaveTimer.Tick += (_, _) => HideDropOverlay();
+        EnablePdfDrop(this);
 
         _coordinator.CatalogChanged += (_, _) => SafeUi(RefreshCards);
         _coordinator.ActivityChanged += (_, message) => SafeUi(() => SetActivity(message));
@@ -85,19 +100,22 @@ public sealed class MainForm : Form
             Image = LoadBrandImage(), BackColor = Color.Transparent
         };
         var version = typeof(MainForm).Assembly.GetName().Version;
-        var versionText = version is null ? "Version 2.4.5" : $"Version {version.Major}.{version.Minor}.{version.Build}";
+        var versionText = version is null ? "Version 2.4.6" : $"Version {version.Major}.{version.Minor}.{version.Build}";
         var brandText = new BrandTextControl(versionText)
         {
             Location = new Point(72, 3), Size = new Size(260, 66), BackColor = Color.Transparent
         };
         brand.Controls.AddRange([icon, brandText]);
 
-        var settings = new Button
-        {
-            Size = new Size(48, 48), FlatStyle = FlatStyle.Flat, BackColor = Color.Transparent,
-            Image = LoadSettingsImage(), ImageAlign = ContentAlignment.MiddleCenter,
-            Cursor = Cursors.Hand, TabStop = true, UseVisualStyleBackColor = false
-        };
+        var settings = _settings;
+        settings.Size = new Size(48, 48);
+        settings.FlatStyle = FlatStyle.Flat;
+        settings.BackColor = Color.Transparent;
+        settings.Image = LoadSettingsImage();
+        settings.ImageAlign = ContentAlignment.MiddleCenter;
+        settings.Cursor = Cursors.Hand;
+        settings.TabStop = true;
+        settings.UseVisualStyleBackColor = false;
         settings.FlatAppearance.BorderSize = 0;
         settings.FlatAppearance.MouseOverBackColor = Color.FromArgb(245, 247, 252);
         settings.FlatAppearance.MouseDownBackColor = Color.FromArgb(232, 237, 248);
@@ -150,9 +168,6 @@ public sealed class MainForm : Form
         _printedTab.Location = new Point(132, 0);
         _readyTab.Click += (_, _) => ChangeTab(false);
         _printedTab.Click += (_, _) => ChangeTab(true);
-        var add = FlatButton("+  Add PDF", Primary, Color.White, 118);
-        add.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        add.Click += AddPdfClicked;
         StyleSecondary(_dateSort, 124);
         _dateSort.Text = "Newest first  ↓";
         _dateSort.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -162,11 +177,22 @@ public sealed class MainForm : Form
             _dateSort.Text = _oldestFirst ? "Oldest first  ↑" : "Newest first  ↓";
             RefreshCards();
         };
-        tabs.Controls.AddRange([_readyTab, _printedTab, _dateSort, add]);
+        StylePrimary(_printAll, 124);
+        _printAll.Text = "Print All";
+        _printAll.Enabled = false;
+        _printAll.AccessibleName = "Print all Ready labels";
+        _toolTips.SetToolTip(_printAll,
+            "Print all Ready PDFs in displayed order, including every page. Printed and failed files are excluded.");
+        _printAll.Click += async (_, _) => await PrintAllAsync();
+        tabs.Controls.AddRange([_readyTab, _printedTab, _dateSort, _printAll]);
         tabs.Resize += (_, _) =>
         {
-            add.Location = new Point(tabs.ClientSize.Width - add.Width, 1);
-            _dateSort.Location = new Point(add.Left - _dateSort.Width - 10, 1);
+            var actionsWidth = _dateSort.Width + _printAll.Width + 10;
+            var top = tabs.ClientSize.Width < _printedTab.Right + actionsWidth + 18
+                ? _readyTab.Bottom + 8 : 1;
+            tabs.Height = top + _printAll.Height + 10;
+            _printAll.Location = new Point(tabs.ClientSize.Width - _printAll.Width, top);
+            _dateSort.Location = new Point(_printAll.Left - _dateSort.Width - 10, top);
         };
 
         var listHost = new Panel { Dock = DockStyle.Fill, BackColor = Canvas };
@@ -177,7 +203,7 @@ public sealed class MainForm : Form
         _cards.BackColor = Canvas;
         _cards.Padding = new Padding(0, 2, 8, 10);
         _cards.Resize += (_, _) => ResizeCards();
-        _empty.Text = "No labels here yet\n\nPDF labels placed in Incoming will appear automatically.";
+        _empty.Text = "No labels here yet\n\nDrag and drop PDF files anywhere in ReLabel to add labels.\nPDFs placed in Incoming will also appear automatically.";
         _empty.ForeColor = Muted;
         _empty.Font = new Font("Segoe UI", 11f);
         _empty.TextAlign = ContentAlignment.MiddleCenter;
@@ -351,6 +377,7 @@ public sealed class MainForm : Form
 
         if (_selectedId.HasValue && labels.All(x => x.Id != _selectedId.Value))
             ClearSelection();
+        UpdatePrintActions();
     }
 
     private LabelCard CreateLabelCard(LabelRecord record, bool selected)
@@ -360,7 +387,10 @@ public sealed class MainForm : Form
         card.Selected += (_, _) => SelectLabel(card.Record.Id);
         card.PrintRequested += async (_, _) => await PrintRecordAsync(card.Record);
         card.DeleteRequested += (_, _) => DeletePrintedRecord(card.Record);
-        card.VerifyRequested += async (_, _) => await PromptScanVerificationAsync(card.Record.Id);
+        card.VerifyRequested += async (_, _) =>
+        {
+            if (!_batchRunning && !_manualPrintActive) await PromptScanVerificationAsync(card.Record.Id);
+        };
         return card;
     }
 
@@ -401,9 +431,9 @@ public sealed class MainForm : Form
         _previewCancellation?.Dispose();
         _previewCancellation = new CancellationTokenSource();
         var record = SelectedLabel;
-        _print.Enabled = record is not null;
+        _print.Enabled = record is not null && !_manualPrintActive && !_batchRunning;
         _openPdf.Enabled = record is not null && File.Exists(record.ArchivePath);
-        _labelSettings.Enabled = record is not null;
+        _labelSettings.Enabled = record is not null && !_manualPrintActive && !_batchRunning;
         if (record is null)
         {
             ClearSelection();
@@ -453,18 +483,97 @@ public sealed class MainForm : Form
             await PrintRecordAsync(record);
     }
 
-    private async Task PrintRecordAsync(LabelRecord record)
+    private async Task PrintAllAsync()
     {
+        if (_batchRunning)
+        {
+            _batchStopRequested = true;
+            UpdatePrintActions();
+            SetActivity("Stopping after the current PDF. Jobs already sent cannot be recalled.");
+            return;
+        }
+        if (_showPrinted || _manualPrintActive) return;
+        var snapshot = PrintBatch.Snapshot(_coordinator.Labels, _oldestFirst);
+        if (snapshot.Length == 0) return;
+        if (string.IsNullOrWhiteSpace(_coordinator.Configuration.PhysicalPrinterQueue))
+        {
+            MessageBox.Show(this, "Open Settings and select the physical Zebra printer first.",
+                "Printer not selected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (_coordinator.Configuration.ConfirmPrintAll)
+        {
+            using var confirmation = new PrintAllConfirmationDialog(PrintBatch.LabelCount(snapshot));
+            if (confirmation.ShowDialog(this) != DialogResult.OK) return;
+        }
+
+        _batchRunning = true;
+        _batchStopRequested = false;
+        _batchTotal = snapshot.Length;
+        UpdatePrintActions();
+        var completion = "Print All stopped.";
+        try
+        {
+            var result = await PrintBatch.RunAsync(snapshot,
+                record => PrintRecordAsync(record, fromBatch: true),
+                () => _batchStopRequested || IsDisposed,
+                (index, total) => { _batchIndex = index; _batchTotal = total; });
+            completion = $"Print All {(result.Stopped ? "stopped" : "complete")}: " +
+                $"{result.Sent} of {result.Total} PDFs sent to the printer; " +
+                $"{result.Skipped} skipped; {result.Remaining} not sent.";
+        }
+        catch (Exception exception)
+        {
+            completion = $"Print All stopped: {exception.Message}";
+        }
+        finally
+        {
+            _batchRunning = false;
+            _batchStopRequested = false;
+            if (!IsDisposed)
+            {
+                RefreshCards();
+                SetActivity(completion);
+            }
+        }
+    }
+
+    private void UpdatePrintActions()
+    {
+        var available = !_manualPrintActive && !_batchRunning;
+        _printAll.Text = _batchRunning
+            ? (_batchStopRequested ? "Stopping..." : "Stop After File") : "Print All";
+        _printAll.AccessibleName = _batchRunning ? "Stop Print All after the current PDF" : "Print all Ready labels";
+        _printAll.Enabled = _batchRunning ? !_batchStopRequested
+            : available && !_showPrinted && _coordinator.Labels.Any(PrintBatch.IsEligible);
+        _print.Enabled = available && SelectedLabel is not null;
+        _labelSettings.Enabled = available && SelectedLabel is not null;
+        _settings.Enabled = available && !_dropImportActive;
+        foreach (var card in _cards.Controls.OfType<LabelCard>())
+            card.SetPrintingAllowed(available);
+    }
+
+    private async Task<BatchPrintOutcome> PrintRecordAsync(LabelRecord record, bool fromBatch = false)
+    {
+        if (_manualPrintActive || (_batchRunning && !fromBatch)) return BatchPrintOutcome.Stopped;
+        if (fromBatch)
+        {
+            var current = _coordinator.Labels.FirstOrDefault(item => item.Id == record.Id);
+            if (current is null || !PrintBatch.IsEligible(current)) return BatchPrintOutcome.Skipped;
+            record = current;
+        }
         if (string.IsNullOrWhiteSpace(_coordinator.Configuration.PhysicalPrinterQueue))
         {
             MessageBox.Show("Open Settings and select the physical Zebra printer first.", "Printer not selected",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
+            return BatchPrintOutcome.Stopped;
         }
 
+        _manualPrintActive = true;
         _selectedId = record.Id;
         _printingId = record.Id;
         _printingMessage = "Preparing...";
+        UpdatePrintActions();
         UpdatePrintIndicators(record.Id, _printingMessage);
         _print.Enabled = false;
         _print.Text = "Preparing...";
@@ -481,11 +590,13 @@ public sealed class MainForm : Form
                     $"ReLabel found a possible template: {record.AppliedTemplate.Carrier} / {record.AppliedTemplate.LayoutName} " +
                     $"(score {record.AppliedTemplate.MatchScore:P0}).\r\n\r\nYes = use proposed template\r\nNo = use generalized layout\r\nCancel = do not print",
                     "Ambiguous carrier template", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
-                if (choice == DialogResult.Cancel) return;
+                if (choice == DialogResult.Cancel) return BatchPrintOutcome.Stopped;
                 ignoreTemplate = choice == DialogResult.No;
             }
-            await _coordinator.PrintAsync(record.Id, default, ignoreTemplate);
-            if (_coordinator.Configuration.ScannerVerificationEnabled)
+            if (fromBatch && _batchStopRequested) return BatchPrintOutcome.Stopped;
+            if (!await _coordinator.PrintAsync(record.Id, default, ignoreTemplate, requireReady: fromBatch))
+                return BatchPrintOutcome.Skipped;
+            var verified = !_coordinator.Configuration.ScannerVerificationEnabled ||
                 await PromptScanVerificationAsync(record.Id);
             _printingId = null;
             _printingMessage = null;
@@ -493,34 +604,118 @@ public sealed class MainForm : Form
                 await LoadPreviewAsync();
             else
                 ClearSelection();
+            return verified ? BatchPrintOutcome.Sent : BatchPrintOutcome.SentAndStopped;
         }
         catch (Exception exception)
         {
             MessageBox.Show(exception.Message, "Label did not print", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return BatchPrintOutcome.Stopped;
         }
         finally
         {
             _printingId = null;
             _printingMessage = null;
+            _manualPrintActive = false;
+            UpdatePrintIndicators(record.Id, null);
             _print.Text = SelectedLabel?.PrintedAt.HasValue == true ? "Print Again" : "Print Label";
-            _print.Enabled = SelectedLabel is not null;
+            UpdatePrintActions();
         }
     }
 
-    private void AddPdfClicked(object? sender, EventArgs arguments)
+    private void EnablePdfDrop(Control control)
     {
-        using var dialog = new OpenFileDialog
-        {
-            Filter = "PDF files (*.pdf)|*.pdf", Multiselect = true, Title = "Add shipping labels"
-        };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        control.AllowDrop = true;
+        control.DragEnter -= PdfDragEnter;
+        control.DragEnter += PdfDragEnter;
+        control.DragOver -= PdfDragEnter;
+        control.DragOver += PdfDragEnter;
+        control.DragDrop -= PdfDragDrop;
+        control.DragDrop += PdfDragDrop;
+        control.DragLeave -= PdfDragLeave;
+        control.DragLeave += PdfDragLeave;
+        control.ControlAdded -= PdfDropControlAdded;
+        control.ControlAdded += PdfDropControlAdded;
+        foreach (Control child in control.Controls) EnablePdfDrop(child);
+    }
 
-        Directory.CreateDirectory(_coordinator.Configuration.IncomingFolder);
-        foreach (var source in dialog.FileNames)
+    private void PdfDropControlAdded(object? sender, ControlEventArgs e)
+    {
+        if (e.Control is not null) EnablePdfDrop(e.Control);
+    }
+
+    private static string[] DroppedPaths(IDataObject? data) =>
+        data?.GetData(DataFormats.FileDrop, autoConvert: false) as string[] ?? [];
+
+    private void PdfDragEnter(object? sender, DragEventArgs e)
+    {
+        _dropLeaveTimer.Stop();
+        var paths = DroppedPaths(e.Data).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var pdfCount = paths.Count(PdfDropImport.IsPdfPath);
+        e.Effect = !_dropImportActive && (e.AllowedEffect & DragDropEffects.Copy) != 0 &&
+                   pdfCount > 0
+            ? DragDropEffects.Copy : DragDropEffects.None;
+        if (e.Effect == DragDropEffects.Copy)
         {
-            var destination = UniqueIncomingPath(Path.GetFileName(source));
-            File.Copy(source, destination);
-            _coordinator.QueueFile(destination);
+            _dropOverlay.Bounds = ClientRectangle;
+            _dropOverlay.ShowFiles(pdfCount, paths.Length - pdfCount);
+        }
+        else
+            HideDropOverlay();
+    }
+
+    private void PdfDragLeave(object? sender, EventArgs e)
+    {
+        // Showing the overlay changes the OLE drop target. Give its DragEnter a
+        // chance to arrive before hiding, avoiding flicker between child controls.
+        _dropLeaveTimer.Stop();
+        _dropLeaveTimer.Start();
+    }
+
+    private void HideDropOverlay()
+    {
+        _dropLeaveTimer.Stop();
+        _dropOverlay.HideOverlay();
+    }
+
+    private async void PdfDragDrop(object? sender, DragEventArgs e)
+    {
+        HideDropOverlay();
+        if (_dropImportActive || (e.AllowedEffect & DragDropEffects.Copy) == 0) return;
+        var paths = DroppedPaths(e.Data).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var pdfs = paths.Where(PdfDropImport.IsPdfPath).ToArray();
+        if (pdfs.Length == 0) return;
+        _dropImportActive = true;
+        UpdatePrintActions();
+        var incomingFolder = _coordinator.Configuration.IncomingFolder;
+        var added = 0;
+        var errors = new List<string>();
+        try
+        {
+            for (var index = 0; index < pdfs.Length; index++)
+            {
+                SetActivity($"Adding PDF {index + 1} of {pdfs.Length}...");
+                try
+                {
+                    var destination = await PdfDropImport.CopyToIncomingAsync(pdfs[index], incomingFolder);
+                    _coordinator.QueueFile(destination);
+                    added++;
+                }
+                catch (Exception exception)
+                {
+                    errors.Add($"{Path.GetFileName(pdfs[index])}: {exception.Message}");
+                }
+            }
+            SetActivity($"Added {added} PDF(s) for import. " +
+                        $"{paths.Length - pdfs.Length} non-PDF item(s) ignored. {errors.Count} failed.");
+            if (errors.Count > 0)
+                MessageBox.Show(this, string.Join(Environment.NewLine, errors.Take(10)) +
+                    (errors.Count > 10 ? $"{Environment.NewLine}And {errors.Count - 10} more failures." : ""),
+                    "Some PDFs could not be added", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _dropImportActive = false;
+            UpdatePrintActions();
         }
     }
 
@@ -578,11 +773,6 @@ public sealed class MainForm : Form
             MessageBox.Show(exception.Message, "Printed label was not deleted", MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }
-    }
-
-    private string UniqueIncomingPath(string fileName)
-    {
-        return ManagedFileNames.NextAvailable(_coordinator.Configuration.IncomingFolder, fileName);
     }
 
     private void SettingsClicked(object? sender, EventArgs arguments)
@@ -652,37 +842,38 @@ public sealed class MainForm : Form
         };
     }
 
-    private async Task PromptScanVerificationAsync(Guid id)
+    private async Task<bool> PromptScanVerificationAsync(Guid id)
     {
         while (true)
         {
             var record = _coordinator.Labels.FirstOrDefault(item => item.Id == id);
-            if (record is null || !record.PrintedAt.HasValue) return;
+            if (record is null || !record.PrintedAt.HasValue) return false;
             using var dialog = new ScannerVerificationDialog(record.OriginalFileName);
-            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            if (dialog.ShowDialog(this) != DialogResult.OK) return false;
             try
             {
                 if (await _coordinator.VerifyPrintedBarcodeAsync(id, dialog.ScannedValue))
                 {
                     SetActivity($"Scan verified for {record.OriginalFileName}");
-                    return;
+                    return true;
                 }
                 if (MessageBox.Show("That scan did not match a barcode decoded from the printed label. Try scanning again?",
                         "Barcode did not match", MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning) != DialogResult.Retry)
-                    return;
+                    return false;
             }
             catch (Exception exception)
             {
                 MessageBox.Show(exception.Message, "Scan could not be verified", MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
-                return;
+                return false;
             }
         }
     }
 
     private void SetActivity(string message)
     {
-        _activity.Text = message;
+        _activity.Text = _batchRunning
+            ? $"Print All - file {_batchIndex} of {_batchTotal}: {message}" : message;
         _activityDot.BackColor = message.Contains("failed", StringComparison.OrdinalIgnoreCase)
             ? Color.FromArgb(220, 70, 85)
             : message.StartsWith("Importing", StringComparison.OrdinalIgnoreCase) ||
@@ -713,7 +904,7 @@ public sealed class MainForm : Form
                 card.SetPrintProgress(message);
     }
 
-    private static bool IsReady(LabelRecord record) => !record.PrintedAt.HasValue && record.Status != LabelStatus.Failed;
+    private static bool IsReady(LabelRecord record) => PrintBatch.IsEligible(record);
     private static string FitLabel(ShipTime4x4.Core.Processing.LabelFitMode mode) =>
         mode == ShipTime4x4.Core.Processing.LabelFitMode.SquishToFill ? "Squish to fill" : "Proportional";
 
@@ -915,10 +1106,29 @@ public sealed class MainForm : Form
         if (InvokeRequired) BeginInvoke(action); else action();
     }
 
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (_dropImportActive)
+        {
+            e.Cancel = true;
+            SetActivity("Wait for dropped PDFs to finish copying, then close ReLabel.");
+        }
+        if (_manualPrintActive || _batchRunning)
+        {
+            _batchStopRequested = true;
+            e.Cancel = true;
+            UpdatePrintActions();
+            SetActivity("Wait for the current PDF to finish, then close ReLabel.");
+        }
+        base.OnFormClosing(e);
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
+            _batchStopRequested = true;
+            _dropLeaveTimer.Dispose();
             _previewCancellation?.Cancel();
             _previewCancellation?.Dispose();
             _preview.Image?.Dispose();
