@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directories:
+      - /src/ShipTime4x4.Core
+      - /src/ShipTime4x4.Hotfolder
+      - /tests/ShipTime4x4.Tests
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

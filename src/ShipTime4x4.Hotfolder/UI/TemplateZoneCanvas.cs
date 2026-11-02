@@ -37,7 +37,9 @@ internal sealed class TemplateZoneCanvas : Control
     public event EventHandler<CanvasZoneCreated>? ZoneCreated;
     public event EventHandler? ManipulationStarted;
     public event EventHandler? ManipulationCompleted;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public bool ShowZoneOverlays { get; set; } = true;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public TemplateZoneType? CreationType { get; set; }
     public double Zoom => _zoom;
 

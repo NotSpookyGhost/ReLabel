@@ -24,16 +24,19 @@ public sealed class PdfLabelProcessor
     public const int SourceRenderDpi = 300;
     private readonly string _tessDataPath;
     private readonly LabelPipeline _pipeline = new();
+    private readonly PdfWorkerClient _worker;
+    public PdfSafetyLimits Limits { get; set; } = new();
     private readonly ConcurrentDictionary<string, Lazy<PdfInspection>> _inspectionCache = new();
 
     public PdfLabelProcessor(string applicationFolder)
     {
         _tessDataPath = Path.Combine(applicationFolder, "tessdata");
+        _worker = new PdfWorkerClient(applicationFolder);
     }
 
     public PdfInspection Inspect(string pdfPath)
     {
-        var key = FileCacheKey(pdfPath);
+        var key = FileCacheKey(pdfPath) + "|" + Limits;
         var lazy = _inspectionCache.GetOrAdd(key,
             _ => new Lazy<PdfInspection>(() => InspectCore(pdfPath), LazyThreadSafetyMode.ExecutionAndPublication));
         try
@@ -51,17 +54,19 @@ public sealed class PdfLabelProcessor
 
     public void RememberInspection(string pdfPath, PdfInspection inspection)
     {
-        var key = FileCacheKey(pdfPath);
+        var key = FileCacheKey(pdfPath) + "|" + Limits;
         _inspectionCache[key] = new Lazy<PdfInspection>(() => inspection);
         TrimInspectionCache(key);
     }
 
     private PdfInspection InspectCore(string pdfPath)
+        => _worker.Inspect(pdfPath, Limits);
+
+    internal PdfInspection InspectBytesInWorker(byte[] pdf, PdfSafetyLimits limits)
     {
-        var pdf = File.ReadAllBytes(pdfPath);
         var pageCount = Conversion.GetPageCount(pdf, password: null);
-        if (pageCount < 1)
-            throw new InvalidOperationException("The PDF does not contain a label page.");
+        limits.ValidatePageCount(pageCount);
+        ValidatePageSizes(pdf, pageCount, SourceRenderDpi, limits);
 
         using var pngStream = new MemoryStream();
         Conversion.SavePng(pngStream, pdf, page: 0, password: null,
@@ -106,6 +111,7 @@ public sealed class PdfLabelProcessor
             : ShippingAddressRegionLocator.Locate(inspection.RecognizedTsv,
                 inspection.SourcePage.Width, inspection.SourcePage.Height, SourceRenderDpi);
         var preparedPages = new List<PreparedLabel>(pageCount);
+        long jobBytes = 0;
         for (var pageIndex = 0; pageIndex < pageCount; pageIndex++)
         {
             var page = pageIndex == 0 && inspection is not null && sourceDpi == SourceRenderDpi
@@ -114,10 +120,10 @@ public sealed class PdfLabelProcessor
                 ? []
                 : ScaleRegions(located, inspection.SourcePage.Width, inspection.SourcePage.Height,
                     page.Width, page.Height);
-            preparedPages.Add(_pipeline.Prepare(page, sourceDpi, targetDpi, marginInches,
+            AddPreparedPage(preparedPages, _pipeline.Prepare(page, sourceDpi, targetDpi, marginInches,
                 widthInches, heightInches, fitMode, rotation, quality, darkness, speedIps,
                 barcodeCompensation, textEnhancement, addressRegions, fromAddressScalePercent,
-                toAddressScalePercent));
+                toAddressScalePercent), ref jobBytes);
         }
         return CombinePages(preparedPages);
     }
@@ -132,9 +138,18 @@ public sealed class PdfLabelProcessor
             return Prepare(pdfPath, targetDpi, marginInches, widthInches, heightInches, fitMode, rotation,
                 quality, darkness, speedIps, barcodeCompensation, textEnhancement,
                 fromAddressScalePercent, toAddressScalePercent);
+        try { CarrierTemplateValidator.ValidateZones(template.Zones); }
+        catch (InvalidDataException)
+        {
+            return Prepare(pdfPath, targetDpi, marginInches, widthInches, heightInches, fitMode, rotation,
+                quality, darkness, speedIps, barcodeCompensation, textEnhancement,
+                fromAddressScalePercent, toAddressScalePercent) with
+                { UsedFallback = true, WarningCode = "invalid-template-metadata" };
+        }
         var sourceDpi = SourceDpiFor(quality, targetDpi);
         var pageCount = GetPageCount(pdfPath);
         var preparedPages = new List<PreparedLabel>(pageCount);
+        long jobBytes = 0;
         for (var pageIndex = 0; pageIndex < pageCount; pageIndex++)
         {
             var page = CarrierTemplateEngine.NormalizePortrait(RenderPage(pdfPath, sourceDpi, pageIndex));
@@ -158,10 +173,10 @@ public sealed class PdfLabelProcessor
             var addresses = usableZones
                 .Where(zone => zone.Type is TemplateZoneType.FromAddress or TemplateZoneType.ToAddress)
                 .Select(zone => zone.Source.ToPixels(page.Width, page.Height)).ToArray();
-            preparedPages.Add(_pipeline.PrepareDefined(page, sourceDpi, targetDpi, marginInches,
+            AddPreparedPage(preparedPages, _pipeline.PrepareDefined(page, sourceDpi, targetDpi, marginInches,
                 widthInches, heightInches, fitMode, rotation, quality, darkness, speedIps,
                 barcodeCompensation, textEnhancement, regions, addresses,
-                fromAddressScalePercent, toAddressScalePercent));
+                fromAddressScalePercent, toAddressScalePercent), ref jobBytes);
         }
         return CombinePages(preparedPages);
     }
@@ -219,7 +234,7 @@ public sealed class PdfLabelProcessor
         if (pages.Count == 0) throw new InvalidOperationException("The PDF does not contain a label page.");
         if (pages.Count == 1) return pages[0] with { PageCount = 1 };
         var totalBytes = pages.Sum(page => (long)page.Zpl.Length);
-        if (totalBytes > int.MaxValue) throw new InvalidOperationException("The prepared print job is too large.");
+        if (totalBytes > PdfSafetyLimits.MaximumJobBytes) throw new InvalidDataException("The prepared print job exceeds 128 MB.");
         var zpl = new byte[(int)totalBytes];
         var offset = 0;
         foreach (var page in pages)
@@ -235,22 +250,42 @@ public sealed class PdfLabelProcessor
             pages.Max(page => page.AppliedBarcodeCompensationDots), pages.Count);
     }
 
-    private static int GetPageCount(string pdfPath)
+    private static void AddPreparedPage(List<PreparedLabel> pages, PreparedLabel page, ref long bytes)
     {
-        var count = Conversion.GetPageCount(File.ReadAllBytes(pdfPath), password: null);
-        return count > 0 ? count : throw new InvalidOperationException("The PDF does not contain a label page.");
+        bytes += page.Zpl.Length;
+        if (bytes > PdfSafetyLimits.MaximumJobBytes)
+            throw new InvalidDataException("The prepared print job exceeds 128 MB. Split the shipment into smaller PDFs.");
+        // Only the first page is displayed. Release subsequent page rasters immediately.
+        pages.Add(pages.Count == 0 ? page : page with { Image = pages[0].Image });
     }
 
-    private static GrayImage RenderPage(string pdfPath, int dpi, int pageIndex = 0)
+    private int GetPageCount(string pdfPath) => _worker.Count(pdfPath, Limits);
+
+    private GrayImage RenderPage(string pdfPath, int dpi, int pageIndex = 0)
+        => _worker.Render(pdfPath, dpi, pageIndex, Limits);
+
+    internal static GrayImage RenderBytesInWorker(byte[] pdf, int dpi, int pageIndex, PdfSafetyLimits limits)
     {
-        var pdf = File.ReadAllBytes(pdfPath);
         var pageCount = Conversion.GetPageCount(pdf, password: null);
+        limits.ValidatePageCount(pageCount);
         if (pageIndex < 0 || pageIndex >= pageCount)
             throw new ArgumentOutOfRangeException(nameof(pageIndex));
+        var size = Conversion.GetPageSize(pdf, page: pageIndex);
+        limits.ValidatePageSize(size.Width, size.Height, dpi);
         using var pngStream = new MemoryStream();
         Conversion.SavePng(pngStream, pdf, page: pageIndex, password: null,
             options: new RenderOptions { Dpi = dpi, Grayscale = false, WithAnnotations = true });
         return DecodeGrayImage(pngStream.ToArray());
+    }
+
+    internal static void ValidatePageSizes(byte[] pdf, int count, int dpi, PdfSafetyLimits limits)
+    {
+        limits.ValidatePageCount(count);
+        for (var i = 0; i < count; i++)
+        {
+            var size = Conversion.GetPageSize(pdf, page: i);
+            limits.ValidatePageSize(size.Width, size.Height, dpi);
+        }
     }
 
     private static string FileCacheKey(string path)
@@ -261,9 +296,16 @@ public sealed class PdfLabelProcessor
 
     private void TrimInspectionCache(string currentKey)
     {
-        if (_inspectionCache.Count <= 12) return;
-        foreach (var key in _inspectionCache.Keys.Where(key => key != currentKey).Take(_inspectionCache.Count - 12))
-            _inspectionCache.TryRemove(key, out _);
+        var ready = _inspectionCache.Where(item => item.Value.IsValueCreated).ToArray();
+        long bytes = ready.Sum(item => (long)item.Value.Value.SourcePage.Pixels.Length +
+            item.Value.Value.SourcePng.Length + 2L * (item.Value.Value.RecognizedText.Length + item.Value.Value.RecognizedTsv.Length));
+        foreach (var item in ready.Where(item => item.Key != currentKey))
+        {
+            if (_inspectionCache.Count <= 12 && bytes <= 128 * 1024 * 1024) break;
+            if (_inspectionCache.TryRemove(item.Key, out var removed))
+                bytes -= removed.Value.SourcePage.Pixels.Length + removed.Value.SourcePng.Length +
+                    2L * (removed.Value.RecognizedText.Length + removed.Value.RecognizedTsv.Length);
+        }
     }
 
     private static IReadOnlyList<PixelRect> ScaleRegions(IReadOnlyList<PixelRect> regions,

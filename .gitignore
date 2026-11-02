@@ -2,7 +2,7 @@ bin/
 obj/
 .vs/
 TestResults/
-tests/
+# Keep regression tests and dependency lock files in source control.
 artifacts/
 tmp/
 *.user

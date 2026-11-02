@@ -34,7 +34,8 @@ public sealed class MultiPagePdfTests : IDisposable
         Directory.CreateDirectory(_folder);
         var path = Path.Combine(_folder, "two-label-shipment.pdf");
         WritePdf(path, 2);
-        var processor = new PdfLabelProcessor(AppContext.BaseDirectory);
+        var processor = new PdfLabelProcessor(
+            Environment.GetEnvironmentVariable("RELABEL_TEST_APPLICATION") ?? AppContext.BaseDirectory);
 
         var inspection = processor.Inspect(path);
         var prepared = processor.Prepare(path, 203, .125, 4, 4, LabelFitMode.Proportional,
@@ -59,7 +60,7 @@ public sealed class MultiPagePdfTests : IDisposable
         return count;
     }
 
-    private static void WritePdf(string path, int pageCount)
+    internal static void WritePdf(string path, int pageCount, int widthPoints = 288, int heightPoints = 432)
     {
         var objects = new List<string>
         {
@@ -70,7 +71,7 @@ public sealed class MultiPagePdfTests : IDisposable
         for (var index = 0; index < pageCount; index++)
         {
             var contentId = pageIds[index] + 1;
-            objects.Add($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 288 432] /Resources << >> /Contents {contentId} 0 R >>");
+            objects.Add($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {widthPoints} {heightPoints}] /Resources << >> /Contents {contentId} 0 R >>");
             var y = 330 - index * 12;
             var stream = $"0 g 2 w 12 12 264 408 re S 20 {y} 248 45 re f 20 180 248 75 re f 40 70 208 55 re f";
             objects.Add($"<< /Length {Encoding.ASCII.GetByteCount(stream)} >>\nstream\n{stream}\nendstream");

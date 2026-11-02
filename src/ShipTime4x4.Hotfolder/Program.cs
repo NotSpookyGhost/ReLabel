@@ -8,6 +8,8 @@ internal static class Program
     [STAThread]
     private static int Main(string[] arguments)
     {
+        if (arguments.Length == 1 && arguments[0] == "--pdf-worker")
+            return PdfWorkerClient.RunWorker();
         if (arguments.Length == 5 &&
             string.Equals(arguments[0], "--initialize-folders", StringComparison.OrdinalIgnoreCase))
         {

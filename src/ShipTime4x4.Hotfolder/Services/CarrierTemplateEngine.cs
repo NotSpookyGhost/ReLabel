@@ -39,7 +39,8 @@ public sealed class CarrierTemplateEngine
     {
         var page = NormalizePortrait(inspection.SourcePage);
         if (!IsFourBySix(page)) return None();
-        var candidates = templates.Where(x => x.Enabled && (!specificTemplate.HasValue || x.Id == specificTemplate)).ToArray();
+        var candidates = templates.Where(x => x is not null && x.Enabled &&
+            (!specificTemplate.HasValue || x.Id == specificTemplate) && HasValidMetadata(x)).ToArray();
         if (candidates.Length == 0) return None();
         var detected = _barcodes.Detect(page);
         var scored = candidates.Select(template => (Template: template,
@@ -274,6 +275,12 @@ public sealed class CarrierTemplateEngine
         var structureWeight = hasLogo ? .48 : .55;
         var anchorWeight = hasLogo ? .22 : .15;
         return Math.Clamp(structure * structureWeight + format * .15 + position * .15 + anchors * anchorWeight, 0, 1);
+    }
+
+    private static bool HasValidMetadata(CarrierTemplate template)
+    {
+        try { CarrierTemplateValidator.ValidateMetadata(template); return true; }
+        catch (InvalidDataException) { return false; }
     }
 
     private static string Signature(GrayImage image, IReadOnlyList<TemplateZone> zones)

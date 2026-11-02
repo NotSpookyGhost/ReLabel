@@ -12,7 +12,7 @@
   Windows 11 &nbsp;|&nbsp; Local processing &nbsp;|&nbsp; Zebra RAW ZPL &nbsp;|&nbsp; 203, 300, and 600 DPI
 </p>
 
-ReLabel watches a folder for PDF shipping labels, keeps the originals organized, produces a print-accurate preview, and sends optimized ZPL directly to an existing Zebra Windows queue. The current release is **2.4.4**.
+ReLabel watches a folder for PDF shipping labels, keeps the originals organized, produces a print-accurate preview, and sends optimized ZPL directly to an existing Zebra Windows queue. The current release is **2.4.5**.
 
 ![A 4 x 6 source label passing through the ReLabel dashboard to produce a final 4 x 4 label](docs/images/relabel-dashboard.png)
 
@@ -143,7 +143,7 @@ Passing the quality test confirms basic communication and raster output. Carrier
 
 ## Install
 
-The current installer is [ReLabel-Setup-2.4.4.exe](artifacts/installer/ReLabel-Setup-2.4.4.exe).
+Download [ReLabel-Setup-2.4.5.exe](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.4.5/ReLabel-Setup-2.4.5.exe) from the [v2.4.5 release](https://github.com/NotSpookyGhost/ReLabel/releases/tag/v2.4.5). A [SHA-256 checksum file](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.4.5/ReLabel-Setup-2.4.5.exe.sha256) is included alongside the installer.
 
 1. Copy the installer to the shipping workstation.
 2. Close ReLabel if it is running.
@@ -152,7 +152,7 @@ The current installer is [ReLabel-Setup-2.4.4.exe](artifacts/installer/ReLabel-S
 From PowerShell:
 
 ```powershell
-Start-Process .\ReLabel-Setup-2.4.4.exe -Verb RunAs
+Start-Process .\ReLabel-Setup-2.4.5.exe -Verb RunAs
 ```
 
 The installer includes the required Microsoft Visual C++ runtime and creates desktop and Start Menu shortcuts.
@@ -284,7 +284,7 @@ Uninstalling removes ReLabel and its shortcuts while preserving user settings an
 
 ## Planned Features
 
-The following items describe the intended direction for future ReLabel releases. They are roadmap concepts, not capabilities included in version 2.4.4, and their final design may change after printer, carrier, and platform testing.
+The following items describe the intended direction for future ReLabel releases. They are roadmap concepts, not capabilities included in version 2.4.5, and their final design may change after printer, carrier, and platform testing.
 
 ### Wider label-size support
 
@@ -317,6 +317,42 @@ A proposed integrated workflow is:
 
 The integration is intended to be opt-in and failure-safe. ReLabel should never mark an order ready when printing or verification fails, and audit records should avoid storing addresses, barcode payloads, or commerce-platform credentials. Authentication, retry handling, duplicate-event protection, and an administrator-visible integration status will be required before this workflow is considered production-ready.
 
+## Security and download verification
+
+### Security patches in 2.4.5
+
+- **Updated dependencies:** bundled .NET 10.0.14, PDFtoImage 5.4.0, PDFium 158.0.8125, and SkiaSharp 4.154.0.
+- **Restricted PDF processing:** PDF rendering and OCR run in a low-integrity worker with stripped privileges, a 1 GiB process-memory limit, and a processing deadline. This limits damage from parser failures but is not a complete network/read-access sandbox.
+- **Resource limits:** configure PDF file size, page count, pixel budget, and processing timeout in **App Settings**. Import queues, print preparation, and combined print-job sizes are bounded.
+- **Quarantine:** incoming PDFs rejected during inspection are preserved in the local application-data **Quarantine** folder. The status and audit log explain the rejection.
+- **Safer templates:** validate metadata and actual archive extraction sizes, inspect the sample before saving, and skip invalid saved entries with a recovery backup.
+- **Safer deletion detection:** a temporary network/folder outage no longer counts as confirmation of a deleted label. Genuine deletion requires repeated checks before the application removes its archive.
+- **Release safeguards:** locked dependency restores, vulnerability checks, scheduled GitHub security tests, Dependabot updates, and trusted Microsoft signature verification for the bundled Visual C++ installer.
+
+Validation completed before packaging: **121 automated tests passed**, plus **18 targeted smoke tests against the published application**. Existing settings and folder paths are preserved. Physical print-and-scan acceptance testing is still recommended.
+
+See the [2.4.5 release notes](RELEASE_NOTES_2.4.5.md) for upgrade guidance.
+
+### Verify your download
+
+The initial v2.4.5 release installer was built and tested locally. It is **unsigned and not GitHub-attested**. To check that its download matches the supplied checksum, download both release assets into the same folder and run:
+
+```powershell
+$expected = ((Get-Content .\ReLabel-Setup-2.4.5.exe.sha256) -split '\s+')[0]
+$actual = (Get-FileHash .\ReLabel-Setup-2.4.5.exe -Algorithm SHA256).Hash
+if ($actual -ne $expected) { throw 'Installer checksum mismatch. Do not run this file.' }
+```
+
+The release workflow generates free GitHub/Sigstore build attestations for installers built on GitHub. Those are separate workflow artifacts, not an attestation of the locally built release asset. For an installer downloaded from a successful **Verified installer** workflow, use:
+
+```powershell
+gh attestation verify .\ReLabel-Setup-2.4.5.exe --repo NotSpookyGhost/ReLabel
+```
+
+Attestations prove build provenance; they are **not Windows Authenticode signatures** and do not remove SmartScreen warnings. Locally built installers have a SHA-256 checksum but no GitHub attestation. A checksum alone does not authenticate a download. Free Windows code signing may be available through [SignPath Foundation](https://signpath.org/) after project approval; it is not yet configured for ReLabel.
+
+See [security safeguards and limitations](SECURITY.md) for details.
+
 ## Release archive
 
 Authentic recoverable historical installers and their SHA-256 hashes are documented in the [installer archive](artifacts/installer/archive/README.md). Do not create rollback installers by renaming a newer binary as an older release.
@@ -330,11 +366,11 @@ Authentic recoverable historical installers and their SHA-256 hashes are documen
 
 The solution contains:
 
-- **ReLabel:** .NET 8 Windows desktop application.
+- **ReLabel:** .NET 10 Windows desktop application (bundled runtime 10.0.14).
 - **ReLabel.Core:** PDF raster, composition, barcode, and ZPL processing.
 - **ReLabel.Tests:** automated regression and behavior tests.
 
-The release build restores dependencies, runs the test suite, and publishes a self-contained Windows x64 application. The installer build packages that publish output with Inno Setup.
+Build with the .NET 10 SDK and Windows Desktop runtime 10.0.14 or newer. The release build restores locked dependencies, checks known NuGet advisories, runs the test suite, and publishes a self-contained Windows x64 application. The installer build packages that publish output with Inno Setup 6 and verifies the bundled Microsoft redistributable's trusted signature. GitHub security checks run on pull requests, pushes, and weekly; Dependabot proposes dependency updates.
 
 ## License and contributions
 

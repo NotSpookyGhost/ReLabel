@@ -43,6 +43,10 @@ public sealed class SettingsDialog : Form
     };
     private readonly ToolTip _toolTips = new();
     private readonly HotfolderCoordinator? _coordinator;
+    private readonly NumericUpDown _pdfMegabytes = new() { Minimum = 1, Maximum = 100, Width = 120 };
+    private readonly NumericUpDown _pdfPages = new() { Minimum = 1, Maximum = 500, Width = 120 };
+    private readonly NumericUpDown _pdfPixels = new() { Minimum = 5, Maximum = 40, Width = 120 };
+    private readonly NumericUpDown _pdfTimeout = new() { Minimum = 5, Maximum = 120, Width = 120 };
 
     public SettingsDialog(HotfolderConfiguration configuration, string auditLogPath,
         Action<HotfolderConfiguration> printCalibration, HotfolderCoordinator? coordinator = null)
@@ -89,6 +93,10 @@ public sealed class SettingsDialog : Form
         _watch.Checked = configuration.WatchEnabled;
         _autoPrint.Checked = configuration.AutoPrint;
         _scannerVerification.Checked = configuration.ScannerVerificationEnabled;
+        _pdfMegabytes.Value = configuration.PdfLimits.MaximumFileMegabytes;
+        _pdfPages.Value = configuration.PdfLimits.MaximumPages;
+        _pdfPixels.Value = configuration.PdfLimits.MaximumPageMegapixels;
+        _pdfTimeout.Value = configuration.PdfLimits.WorkerTimeoutSeconds;
         _toolTips.SetToolTip(_scannerVerification,
             "When enabled, ReLabel asks the operator to scan one printed barcode and compares it locally. Barcode values are never logged.");
         ConfigureDefaultEditors(configuration);
@@ -138,7 +146,7 @@ public sealed class SettingsDialog : Form
         var automation = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill, Padding = new Padding(30, 28, 30, 20),
-            FlowDirection = FlowDirection.TopDown, WrapContents = false
+            FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true
         };
         foreach (var option in new[] { _watch, _autoPrint, _scannerVerification })
         {
@@ -151,6 +159,20 @@ public sealed class SettingsDialog : Form
             Text = "Scanner verification compares the scan locally. Barcode values are never written to the audit log.",
             ForeColor = Color.FromArgb(92, 104, 119), AutoSize = false, Size = new Size(630, 48),
             Margin = new Padding(24, 0, 0, 0)
+        });
+        var safety = SettingsGrid(4, 42);
+        safety.Dock = DockStyle.None;
+        safety.Size = new Size(650, 180);
+        safety.Padding = Padding.Empty;
+        AddRow(safety, 0, "Maximum PDF size (MB)", _pdfMegabytes, null);
+        AddRow(safety, 1, "Maximum pages per PDF", _pdfPages, null);
+        AddRow(safety, 2, "Page limit (megapixels)", _pdfPixels, null);
+        AddRow(safety, 3, "PDF timeout (seconds)", _pdfTimeout, null);
+        automation.Controls.Add(safety);
+        automation.Controls.Add(new Label
+        {
+            Text = "Rejected PDFs are preserved in the local Quarantine folder; the status message shows its location.",
+            AutoSize = false, Size = new Size(630, 44), ForeColor = Color.FromArgb(92, 104, 119)
         });
         automationPage.Controls.Add(automation);
 
@@ -254,7 +276,12 @@ public sealed class SettingsDialog : Form
         DefaultToAddressScalePercent = (int)_defaultToScale.Value,
         WatchEnabled = _watch.Checked,
         AutoPrint = _autoPrint.Checked,
-        ScannerVerificationEnabled = _scannerVerification.Checked
+        ScannerVerificationEnabled = _scannerVerification.Checked,
+        PdfLimits = new PdfSafetyLimits
+        {
+            MaximumFileMegabytes = (int)_pdfMegabytes.Value, MaximumPages = (int)_pdfPages.Value,
+            MaximumPageMegapixels = (int)_pdfPixels.Value, WorkerTimeoutSeconds = (int)_pdfTimeout.Value
+        }
     };
 
     private void QualityTestClicked(object? sender, EventArgs arguments)

@@ -27,6 +27,14 @@ foreach ($required in @(
     if (-not (Test-Path -LiteralPath $required)) { throw "Required installer input is missing: $required" }
 }
 
+& (Join-Path $PSScriptRoot 'Verify-InstallerDependency.ps1') -Path $runtime
+$publishedVersion = (Get-Item -LiteralPath (Join-Path $publish 'ReLabel.exe')).VersionInfo.ProductVersion.Split('+')[0]
+if ($publishedVersion -ne $version) { throw 'Published application version does not match the installer project.' }
+$runtimeConfig = Get-Content -LiteralPath (Join-Path $publish 'ReLabel.runtimeconfig.json') -Raw | ConvertFrom-Json
+if (-not ($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object {
+    $_.name -eq 'Microsoft.NETCore.App' -and [version]$_.version -ge [version]'10.0.14'
+})) { throw 'The installer requires the patched, self-contained .NET 10.0.14 or later runtime.' }
+
 New-Item -ItemType Directory -Path (Split-Path $output) -Force | Out-Null
 & $compiler $script
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
@@ -34,6 +42,7 @@ if (-not (Test-Path -LiteralPath $output)) { throw 'Setup executable was not cre
 
 $item = Get-Item -LiteralPath $output
 $hash = Get-FileHash -LiteralPath $output -Algorithm SHA256
+"$($hash.Hash.ToLowerInvariant())  $($item.Name)" | Set-Content -LiteralPath "$output.sha256" -Encoding ascii
 Write-Host "Installer: $($item.FullName)"
 Write-Host "Size: $($item.Length) bytes"
 Write-Host "SHA256: $($hash.Hash)"

@@ -39,9 +39,12 @@ public sealed record HotfolderConfiguration
     public bool AutoPrint { get; init; }
     public bool WatchEnabled { get; init; } = true;
     public bool ScannerVerificationEnabled { get; init; }
+    public PdfSafetyLimits PdfLimits { get; init; } = new();
 
     public void Validate()
     {
+        if (PdfLimits is null) throw new InvalidOperationException("PDF safety limits are missing.");
+        PdfLimits.Validate();
         if (string.IsNullOrWhiteSpace(IncomingFolder))
             throw new InvalidOperationException("The incoming folder is required.");
         if (string.IsNullOrWhiteSpace(ArchiveFolder))

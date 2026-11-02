@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using ShipTime4x4.Core.Processing;
 using ShipTime4x4.Core.Raster;
+using ShipTime4x4.Hotfolder.Models;
 
 namespace ShipTime4x4.Hotfolder.Services;
 
@@ -34,18 +35,27 @@ public sealed class PreparedLabelDiskCache
                 var width = reader.ReadInt32();
                 var height = reader.ReadInt32();
                 var pixelLength = reader.ReadInt32();
-                if (width <= 0 || height <= 0 || pixelLength != checked(width * height)) return false;
+                if (width <= 0 || height <= 0 || width > 24000 || height > 24000 ||
+                    (long)width * height > 40_000_000 || pixelLength != checked(width * height)) return false;
                 var pixels = reader.ReadBytes(pixelLength);
                 if (pixels.Length != pixelLength) return false;
                 var zplLength = reader.ReadInt32();
-                if (zplLength <= 0 || zplLength > 200_000_000) return false;
+                if (zplLength <= 0 || zplLength > PdfSafetyLimits.MaximumJobBytes) return false;
                 var zpl = reader.ReadBytes(zplLength);
                 if (zpl.Length != zplLength) return false;
                 var fallback = reader.ReadBoolean();
-                var warning = reader.ReadBoolean() ? reader.ReadString() : null;
+                string? warning = null;
+                if (reader.ReadBoolean())
+                {
+                    var textLength = reader.Read7BitEncodedInt();
+                    if (textLength < 0 || textLength > 8192) return false;
+                    var text = reader.ReadBytes(textLength);
+                    if (text.Length != textLength) return false;
+                    warning = Encoding.UTF8.GetString(text);
+                }
                 var compensation = reader.ReadInt32();
                 var pageCount = reader.ReadInt32();
-                if (pageCount <= 0) return false;
+                if (pageCount <= 0 || pageCount > 500) return false;
                 prepared = new PreparedLabel(new GrayImage(width, height, pixels), zpl, fallback, warning,
                     compensation, pageCount);
             }

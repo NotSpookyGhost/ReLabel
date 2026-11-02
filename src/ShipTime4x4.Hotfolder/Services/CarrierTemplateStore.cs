@@ -52,9 +52,11 @@ public sealed class CarrierTemplateStore
         CarrierTemplateValidator.Validate(template);
         lock (_gate)
         {
+            var previous = _templates.ToList();
             var index = _templates.FindIndex(x => x.Id == template.Id);
             if (index < 0) _templates.Add(template); else _templates[index] = template;
-            SaveLocked();
+            try { SaveLocked(); }
+            catch { _templates = previous; throw; }
         }
     }
 
@@ -117,7 +119,8 @@ public sealed class CarrierTemplateStore
         }
     }
 
-    public CarrierTemplate ImportPackage(string packagePath)
+    public CarrierTemplate ImportPackage(string packagePath,
+        Func<CarrierTemplate, CarrierTemplate>? inspectSample = null)
     {
         if (!File.Exists(packagePath))
             throw new FileNotFoundException("The selected template package no longer exists.", packagePath);
@@ -125,7 +128,11 @@ public sealed class CarrierTemplateStore
         PortablePackage package;
         ZipArchiveEntry sourceEntry;
         using var stream = new FileStream(packagePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (stream.Length > MaximumSourcePdfBytes + MaximumManifestBytes + 1024 * 1024)
+            throw new InvalidDataException("The template package is too large.");
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+        if (archive.Entries.Count != 2)
+            throw new InvalidDataException("A template package must contain only template.json and sample.pdf.");
         var manifests = archive.Entries.Where(entry =>
             string.Equals(entry.FullName, ManifestEntryName, StringComparison.OrdinalIgnoreCase)).ToArray();
         var sources = archive.Entries.Where(entry =>
@@ -140,7 +147,11 @@ public sealed class CarrierTemplateStore
             throw new InvalidDataException("The template package source PDF is empty or too large.");
         try
         {
-            using var reader = new StreamReader(manifests[0].Open(), Encoding.UTF8, true);
+            using var manifestInput = manifests[0].Open();
+            using var manifestBytes = new MemoryStream();
+            CopyBounded(manifestInput, manifestBytes, MaximumManifestBytes);
+            manifestBytes.Position = 0;
+            using var reader = new StreamReader(manifestBytes, Encoding.UTF8, true);
             package = JsonSerializer.Deserialize<PortablePackage>(reader.ReadToEnd(), Options)
                 ?? throw new InvalidDataException("The template package manifest is invalid.");
         }
@@ -153,8 +164,7 @@ public sealed class CarrierTemplateStore
                 $"Template package version {package.FormatVersion} is not supported by this ReLabel version.");
         if (package.Template is null)
             throw new InvalidDataException("The template package contains no template data.");
-        if (package.Template.Zones.Count > 500)
-            throw new InvalidDataException("The template package contains too many zones.");
+        CarrierTemplateValidator.ValidateMetadata(package.Template);
 
         var id = Guid.NewGuid();
         var folder = Path.Combine(_root, id.ToString("N"));
@@ -164,7 +174,7 @@ public sealed class CarrierTemplateStore
         {
             using (var input = sourceEntry.Open())
             using (var output = new FileStream(storedPdf, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                input.CopyTo(output);
+                CopyBounded(input, output, MaximumSourcePdfBytes);
             EnsurePdfHeader(storedPdf);
 
             var imported = package.Template with
@@ -178,6 +188,8 @@ public sealed class CarrierTemplateStore
                     .Select(zone => zone with { Id = Guid.NewGuid() }).ToArray()
             };
             CarrierTemplateValidator.Validate(imported);
+            // Inspect and regenerate untrusted matching features BEFORE committing the catalog.
+            if (inspectSample is not null) imported = inspectSample(imported);
             Save(imported);
             return imported;
         }
@@ -185,6 +197,20 @@ public sealed class CarrierTemplateStore
         {
             if (Directory.Exists(folder)) Directory.Delete(folder, true);
             throw;
+        }
+    }
+
+    internal static void CopyBounded(Stream input, Stream output, long maximumBytes)
+    {
+        var buffer = new byte[81920];
+        long total = 0;
+        int count;
+        while ((count = input.Read(buffer, 0, buffer.Length)) != 0)
+        {
+            total += count;
+            if (total > maximumBytes)
+                throw new InvalidDataException("Template archive content exceeds its extraction limit.");
+            output.Write(buffer, 0, count);
         }
     }
 
@@ -201,13 +227,29 @@ public sealed class CarrierTemplateStore
     private List<CarrierTemplate> Load()
     {
         if (!File.Exists(_catalogPath)) return [];
-        try { return JsonSerializer.Deserialize<Catalog>(File.ReadAllText(_catalogPath), Options)?.Templates.ToList() ?? []; }
-        catch (JsonException)
+        try
         {
-            File.Copy(_catalogPath, _catalogPath + ".invalid-" + DateTime.Now.ToString("yyyyMMddHHmmss"), true);
+            if (new FileInfo(_catalogPath).Length > 32 * 1024 * 1024)
+                throw new InvalidDataException("Template catalog is too large.");
+            var catalog = JsonSerializer.Deserialize<Catalog>(File.ReadAllText(_catalogPath), Options);
+            if (catalog?.Templates is null) throw new InvalidDataException("Template catalog is invalid.");
+            var valid = new List<CarrierTemplate>();
+            foreach (var template in catalog.Templates)
+            {
+                try { CarrierTemplateValidator.ValidateMetadata(template); valid.Add(template); }
+                catch (InvalidDataException) { }
+            }
+            if (valid.Count != catalog.Templates.Count) BackupInvalidCatalog();
+            return valid;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException)
+        {
+            BackupInvalidCatalog();
             return [];
         }
     }
+    private void BackupInvalidCatalog() => File.Copy(_catalogPath,
+        _catalogPath + ".invalid-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N"), false);
     private void SaveLocked()
     {
         var temporary = _catalogPath + ".tmp";
@@ -246,8 +288,47 @@ public sealed class CarrierTemplateStore
 
 public static class CarrierTemplateValidator
 {
+    public static void ValidateMetadata(CarrierTemplate? template)
+    {
+        if (template is null || string.IsNullOrWhiteSpace(template.Carrier) ||
+            string.IsNullOrWhiteSpace(template.LayoutName) || template.Carrier.Length > 160 ||
+            template.LayoutName.Length > 160 || template.Revision < 1)
+            throw new InvalidDataException("Template identity is missing or invalid.");
+        if (!double.IsFinite(template.BuiltInAssetScale) || template.BuiltInAssetScale is < .05 or > 20)
+            throw new InvalidDataException("Template asset scale is invalid.");
+        ValidateZones(template.Zones);
+        var f = template.Features;
+        if (f is null || f.StaticSignature is null ||
+            (f.StaticSignature.Length != 0 && f.StaticSignature.Length != 32 * 48) ||
+            f.StaticSignature.Any(c => c is not ('0' or '1' or '?')) ||
+            f.Width is < 0 or > 24000 || f.Height is < 0 or > 24000 ||
+            f.BarcodeLocations is null || f.BarcodeLocations.Count > 128 ||
+            f.BarcodeFormats is null || f.BarcodeFormats.Count > 128 ||
+            f.StaticOcrAnchors is null || f.StaticOcrAnchors.Count > 256 ||
+            f.BarcodeFormats.Any(s => string.IsNullOrWhiteSpace(s) || s.Length > 64) ||
+            f.StaticOcrAnchors.Any(s => string.IsNullOrWhiteSpace(s) || s.Length > 128))
+            throw new InvalidDataException("Template matching metadata is missing or invalid.");
+        foreach (var rect in f.BarcodeLocations) ValidateRect(rect, "barcode");
+    }
+
+    public static void ValidateZones(IReadOnlyList<TemplateZone>? zones)
+    {
+        if (zones is null || zones.Count is < 1 or > 500 || zones.Any(z => z is null) ||
+            zones.Select(z => z.Id).Distinct().Count() != zones.Count)
+            throw new InvalidDataException("Template zones are missing, duplicated, or too numerous.");
+        foreach (var zone in zones)
+        {
+            if (!Enum.IsDefined(zone.Type) || !Enum.IsDefined(zone.OtherPriority) ||
+                !Enum.IsDefined(zone.BuiltInAsset) || zone.OtherName is null || zone.OtherName.Length > 160)
+                throw new InvalidDataException("A template zone has an invalid type, priority, or name.");
+            if (zone.HasSourceRegion) ValidateRect(zone.Source, "source");
+            ValidateRect(zone.Destination4x4, "destination");
+        }
+    }
+
     public static void Validate(CarrierTemplate template)
     {
+        ValidateMetadata(template);
         if (string.IsNullOrWhiteSpace(template.Carrier)) throw new InvalidOperationException("Carrier name is required.");
         if (string.IsNullOrWhiteSpace(template.LayoutName)) throw new InvalidOperationException("Layout name is required.");
         if (!File.Exists(template.SourcePdfPath)) throw new InvalidOperationException("Template source PDF is missing.");
@@ -273,9 +354,11 @@ public static class CarrierTemplateValidator
                     $"'{zone.DisplayName}' crosses the red 0.125-inch safe-margin outline.");
         }
     }
-    private static void ValidateRect(NormalizedRect rect, string name)
+    private static void ValidateRect(NormalizedRect? rect, string name)
     {
-        if (rect.X < 0 || rect.Y < 0 || rect.Width <= 0 || rect.Height <= 0 || rect.Right > 1 || rect.Bottom > 1)
-            throw new InvalidOperationException($"A {name} zone is outside its canvas.");
+        if (rect is null || !double.IsFinite(rect.X) || !double.IsFinite(rect.Y) ||
+            !double.IsFinite(rect.Width) || !double.IsFinite(rect.Height) ||
+            rect.X < 0 || rect.Y < 0 || rect.Width <= 0 || rect.Height <= 0 || rect.Right > 1 || rect.Bottom > 1)
+            throw new InvalidDataException($"A {name} zone is invalid or outside its canvas.");
     }
 }

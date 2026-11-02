@@ -399,16 +399,18 @@ public sealed class HotfolderTests
         File.WriteAllText(archiveFile, "archive");
         var record = new LabelRecord { OriginalFileName = "label.pdf", SourcePath = source, ArchivePath = archiveFile };
         new LabelCatalog(data).Add(record);
-        using var coordinator = new HotfolderCoordinator(data, AppContext.BaseDirectory);
+        var clock = new SecurityTestClock();
+        using var coordinator = new HotfolderCoordinator(data, AppContext.BaseDirectory, clock: clock);
         coordinator.ApplyConfiguration(new HotfolderConfiguration
         {
             IncomingFolder = Path.Combine(root, "Incoming"), ReadyFolder = ready, ArchiveFolder = archive,
             PrintedFolder = Path.Combine(root, "Printed"), WatchEnabled = false
         }, save: false);
         File.Delete(source);
-        var deadline = DateTime.UtcNow.AddSeconds(3);
-        while (coordinator.Labels.Count > 0 && DateTime.UtcNow < deadline)
-            Thread.Sleep(50);
+        coordinator.ReconcileManagedFiles();
+        Assert.Single(coordinator.Labels);
+        Assert.True(File.Exists(archiveFile));
+        clock.Advance(TimeSpan.FromSeconds(6));
         coordinator.ReconcileManagedFiles();
 
         Assert.Empty(coordinator.Labels);

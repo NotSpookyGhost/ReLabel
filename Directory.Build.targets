@@ -1,0 +1,16 @@
+<Project>
+  <!-- Native symbol bundles can exceed the application size several times.
+       They are not required to run or test the Windows x64 release. -->
+  <Target Name="ExcludeNativeSymbolsFromOutput" BeforeTargets="_CopyFilesMarkedCopyLocal">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
+        Condition="'%(ReferenceCopyLocalPaths.Extension)' == '.pdb' and '%(ReferenceCopyLocalPaths.NuGetPackageId)' != ''" />
+    </ItemGroup>
+  </Target>
+  <Target Name="ExcludeNativeSymbolsFromPublish" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+        Condition="'%(ResolvedFileToPublish.Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
+</Project>

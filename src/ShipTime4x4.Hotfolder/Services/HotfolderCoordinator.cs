@@ -20,7 +20,11 @@ public sealed class HotfolderCoordinator : IDisposable
     private readonly PreparedLabelDiskCache _diskCache;
     private readonly CarrierTemplateStore _templateStore;
     private readonly CarrierTemplateEngine _templateEngine = new();
-    private readonly Channel<string> _incoming = Channel.CreateUnbounded<string>();
+    private readonly Channel<string> _incoming = Channel.CreateBounded<string>(new BoundedChannelOptions(128)
+        { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
+    private readonly SemaphoreSlim _preparationGate = new(1, 1);
+    private readonly string _quarantineFolder;
+    private int _warmupActive;
     private readonly ConcurrentDictionary<string, byte> _queued = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _printGate = new(1, 1);
     private readonly ConcurrentDictionary<string, Lazy<Task<CachedPreparedLabel>>> _preparedCache = new();
@@ -28,6 +32,8 @@ public sealed class HotfolderCoordinator : IDisposable
     private readonly Task _worker;
     private readonly System.Threading.Timer _retentionTimer;
     private readonly System.Threading.Timer _printerStatusTimer;
+    private readonly System.Threading.Timer _reconciliationTimer;
+    private readonly ManagedFileMonitor _managedFiles;
     private FileSystemWatcher? _incomingWatcher;
     private FileSystemWatcher? _readyWatcher;
     private FileSystemWatcher? _printedWatcher;
@@ -35,9 +41,12 @@ public sealed class HotfolderCoordinator : IDisposable
     private HotfolderConfiguration _configuration;
     private int _printerStatusCheckActive;
 
-    public HotfolderCoordinator(string dataFolder, string applicationFolder, IRawPrinterClient? printer = null)
+    public HotfolderCoordinator(string dataFolder, string applicationFolder, IRawPrinterClient? printer = null,
+        TimeProvider? clock = null)
     {
         _configurationStore = new ConfigurationStore(dataFolder);
+        _managedFiles = new ManagedFileMonitor(clock);
+        _quarantineFolder = Path.Combine(dataFolder, "Quarantine");
         _catalog = new LabelCatalog(dataFolder);
         _processor = new PdfLabelProcessor(applicationFolder);
         _printer = printer ?? new RawPrinterClient();
@@ -51,6 +60,12 @@ public sealed class HotfolderCoordinator : IDisposable
             Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         _printerStatusTimer = new System.Threading.Timer(_ => RefreshPrinterStatus(), null,
             Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _reconciliationTimer = new System.Threading.Timer(_ =>
+        {
+            try { ReconcileManagedFiles(); if (_configuration.WatchEnabled) QueueExistingFiles(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { Report("Folder access is unavailable. Labels and archives have been preserved."); }
+        }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
     public event EventHandler? CatalogChanged;
@@ -72,6 +87,7 @@ public sealed class HotfolderCoordinator : IDisposable
         PurgeExpiredPrinted(DateTimeOffset.Now);
         _retentionTimer.Change(TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(15));
         _printerStatusTimer.Change(TimeSpan.Zero, TimeSpan.FromSeconds(4));
+        _reconciliationTimer.Change(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         _ = Task.Run(() => BackfillMissingAddresses(_stopping.Token));
         _ = Task.Run(() => PreloadReadyLabelsAsync(_stopping.Token));
     }
@@ -85,6 +101,7 @@ public sealed class HotfolderCoordinator : IDisposable
         Directory.CreateDirectory(configuration.PrintedFolder);
         DisposeWatchers();
         _configuration = configuration;
+        _processor.Limits = configuration.PdfLimits;
         _preparedCache.Clear();
         if (save)
             _configurationStore.Save(configuration);
@@ -131,8 +148,8 @@ public sealed class HotfolderCoordinator : IDisposable
         if (!string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase))
             return;
         var fullPath = Path.GetFullPath(path);
-        if (_queued.TryAdd(fullPath, 0))
-            _incoming.Writer.TryWrite(fullPath);
+        if (_queued.TryAdd(fullPath, 0) && !_incoming.Writer.TryWrite(fullPath))
+            _queued.TryRemove(fullPath, out _); // Periodic scans retry deferred files.
     }
 
     private static FileSystemWatcher CreateWatcher(string path, bool recursive) => new(path, "*.pdf")
@@ -153,8 +170,13 @@ public sealed class HotfolderCoordinator : IDisposable
 
     public void WarmPrintCache(LabelRecord record)
     {
+        if (Interlocked.Exchange(ref _warmupActive, 1) != 0) return;
         _ = GetPreparedAsync(record, applyRotation: true, CancellationToken.None)
-            .ContinueWith(_ => { }, TaskScheduler.Default);
+            .ContinueWith(task =>
+            {
+                _ = task.Exception;
+                Volatile.Write(ref _warmupActive, 0);
+            }, TaskScheduler.Default);
     }
 
     public async Task PrintAsync(Guid id, CancellationToken cancellationToken = default,
@@ -471,8 +493,14 @@ public sealed class HotfolderCoordinator : IDisposable
         CarrierTemplate? imported = null;
         try
         {
-            imported = _templateStore.ImportPackage(packagePath);
-            _ = _processor.Inspect(imported.SourcePdfPath);
+            imported = _templateStore.ImportPackage(packagePath, template =>
+            {
+                var inspection = _processor.Inspect(template.SourcePdfPath);
+                if (inspection.PageCount != 1 || !CarrierTemplateEngine.IsFourBySix(inspection.SourcePage))
+                    throw new InvalidDataException("Template samples must contain exactly one 4 x 6 label.");
+                return template with { Features = _templateEngine.ExtractFeatures(
+                    inspection.SourcePage, inspection.RecognizedTsv, template.Zones) };
+            });
             _audit.Write("TemplateImport", null, Path.GetFileName(packagePath), "Success",
                 $"Template={imported.Id}; Carrier={imported.Carrier}; Revision={imported.Revision}");
             return imported;
@@ -672,7 +700,9 @@ public sealed class HotfolderCoordinator : IDisposable
         var record = _catalog.GetAll().FirstOrDefault(item =>
             PathEquals(item.SourcePath, path) || PathEquals(item.PrintedPath, path));
         if (record is null) return;
-        RemoveManagedRecord(record, reason);
+        // Watcher errors and rename events also occur during network interruptions.
+        // Use the same repeated, access-aware checks as startup reconciliation.
+        ConfirmManagedRemoval(record, reason);
     }
 
     public bool ReconcileManagedFiles()
@@ -681,10 +711,25 @@ public sealed class HotfolderCoordinator : IDisposable
         foreach (var record in _catalog.GetAll())
         {
             var managedPath = record.PrintedAt.HasValue ? record.PrintedPath : record.SourcePath;
-            if (string.IsNullOrWhiteSpace(managedPath) || File.Exists(managedPath)) continue;
-            changed |= RemoveManagedRecord(record, "Startup/folder reconciliation");
+            if (string.IsNullOrWhiteSpace(managedPath)) continue;
+            changed |= ConfirmManagedRemoval(record, "Confirmed file deletion");
         }
         return changed;
+    }
+
+    private bool ConfirmManagedRemoval(LabelRecord record, string reason)
+    {
+        var path = record.PrintedAt.HasValue ? record.PrintedPath : record.SourcePath;
+        var root = record.PrintedAt.HasValue ? _configuration.PrintedFolder : _configuration.ReadyFolder;
+        if (string.IsNullOrWhiteSpace(path) || !_managedFiles.ConfirmMissing(path, root)) return false;
+        // A print/move may have changed the catalog since the watcher notification.
+        var current = _catalog.Find(record.Id);
+        if (current is null || current.SourcePath != record.SourcePath ||
+            current.PrintedPath != record.PrintedPath || current.PrintedAt != record.PrintedAt) return false;
+        if (ManagedFileMonitor.Probe(path, root) != ManagedFileState.Missing) return false;
+        var removed = RemoveManagedRecord(current, reason);
+        if (removed) _managedFiles.Forget(path);
+        return removed;
     }
 
     private bool RemoveManagedRecord(LabelRecord record, string reason)
@@ -774,6 +819,16 @@ public sealed class HotfolderCoordinator : IDisposable
             inspection = await Task.Run(() => _processor.Inspect(readyPath), cancellationToken).ConfigureAwait(false);
             shipTo = RecipientNameParser.Parse(inspection.RecognizedText, inspection.RecognizedTsv);
             shipToAddress = DestinationAddressParser.Parse(inspection.RecognizedText, inspection.RecognizedTsv, shipTo);
+        }
+        catch (InvalidDataException exception)
+        {
+            Directory.CreateDirectory(_quarantineFolder);
+            var rejected = ManagedFileNames.NextAvailable(_quarantineFolder, info.Name);
+            MarkInternalFileChange(readyPath);
+            File.Move(readyPath, rejected);
+            _audit.Write("ImportRejected", null, info.Name, "Quarantined", exception.Message);
+            Report($"Rejected {info.Name}: {exception.Message} File preserved in {_quarantineFolder}");
+            return;
         }
         catch (Exception exception)
         {
@@ -920,8 +975,11 @@ public sealed class HotfolderCoordinator : IDisposable
         var key = PreparationKey(record, applyRotation, ignoreTemplate);
         var existed = _preparedCache.TryGetValue(key, out var existing);
         var configuration = _configuration;
-        var lazy = existing ?? _preparedCache.GetOrAdd(key, _ => new Lazy<Task<CachedPreparedLabel>>(() => Task.Run(() =>
+        var lazy = existing ?? _preparedCache.GetOrAdd(key, _ => new Lazy<Task<CachedPreparedLabel>>(() => Task.Run(async () =>
         {
+            await _preparationGate.WaitAsync(_stopping.Token).ConfigureAwait(false);
+            try
+            {
             var timer = Stopwatch.StartNew();
             if (_diskCache.TryGet(record.Id, key, out var cached))
                 return new CachedPreparedLabel(cached, "Disk", timer.ElapsedMilliseconds);
@@ -934,6 +992,8 @@ public sealed class HotfolderCoordinator : IDisposable
                 record.EffectiveToAddressScalePercent, ignoreTemplate ? null : record.AppliedTemplate);
             _diskCache.Put(record.Id, key, prepared);
             return new CachedPreparedLabel(prepared, "Miss", timer.ElapsedMilliseconds);
+            }
+            finally { _preparationGate.Release(); }
         }), LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
@@ -959,7 +1019,8 @@ public sealed class HotfolderCoordinator : IDisposable
             _configuration.PrintSpeedIps, record.OutputWidthInches, record.OutputHeightInches,
             record.FitMode, rotation, compensation, record.TextEnhancement,
             record.EffectiveFromAddressScalePercent, record.EffectiveToAddressScalePercent,
-            ignoreTemplate ? "no-template" : record.AppliedTemplate?.Hash ?? "no-template", "cache-v7");
+            ignoreTemplate ? "no-template" : record.AppliedTemplate?.Hash ?? "no-template",
+            _configuration.PdfLimits, "cache-v8");
     }
 
     private void TrimPreparedCache(string currentKey)
@@ -1048,6 +1109,7 @@ public sealed class HotfolderCoordinator : IDisposable
         _stopping.Cancel();
         _retentionTimer.Dispose();
         _printerStatusTimer.Dispose();
+        _reconciliationTimer.Dispose();
         _incoming.Writer.TryComplete();
         try { _worker.Wait(TimeSpan.FromSeconds(2)); } catch { }
         _stopping.Dispose();

@@ -49,6 +49,7 @@ internal sealed class EditorToolButton : Button
         Cursor = Cursors.Hand; TabStop = true; UseVisualStyleBackColor = false;
     }
 
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public bool Active
     {
         get => BackColor == TemplateEditorPalette.Accent;

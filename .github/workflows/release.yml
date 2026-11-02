@@ -1,0 +1,42 @@
+name: Verified installer
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  installer:
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Download and verify Microsoft runtime installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory artifacts/dependencies -Force | Out-Null
+          Invoke-WebRequest https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile artifacts/dependencies/VC_redist.x64.exe
+          ./scripts/Verify-InstallerDependency.ps1 -Path artifacts/dependencies/VC_redist.x64.exe
+      - run: ./scripts/Build-ReLabel-Release.ps1
+      - run: ./scripts/Build-ReLabel-Installer.ps1
+      - name: Attest the installer
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: artifacts/installer/ReLabel-Setup-*.exe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ReLabel-installer
+          path: |
+            artifacts/installer/ReLabel-Setup-*.exe
+            artifacts/installer/ReLabel-Setup-*.exe.sha256
+          if-no-files-found: error
