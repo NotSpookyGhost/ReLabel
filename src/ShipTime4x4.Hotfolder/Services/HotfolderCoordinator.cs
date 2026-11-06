@@ -179,13 +179,18 @@ public sealed class HotfolderCoordinator : IDisposable
             }, TaskScheduler.Default);
     }
 
-    public async Task PrintAsync(Guid id, CancellationToken cancellationToken = default,
-        bool ignoreTemplate = false)
+    public async Task<bool> PrintAsync(Guid id, CancellationToken cancellationToken = default,
+        bool ignoreTemplate = false, bool requireReady = false)
     {
         await _printGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var record = _catalog.Find(id) ?? throw new InvalidOperationException("The selected label no longer exists.");
+            var record = _catalog.Find(id);
+            // Check under the print gate: Auto Print or another queued request may
+            // have printed this item since the dashboard took its snapshot.
+            if (requireReady && (record is null || !PrintBatch.IsEligible(record))) return false;
+            if (record is null) throw new InvalidOperationException("The selected label no longer exists.");
+            if (requireReady && !File.Exists(record.SourcePath)) return false;
             var totalTimer = Stopwatch.StartNew();
             try
             {
@@ -245,6 +250,7 @@ public sealed class HotfolderCoordinator : IDisposable
                 Report(record.PageCount > 1
                     ? $"Printed {record.PageCount} labels from {record.OriginalFileName}"
                     : $"Printed {record.OriginalFileName}");
+                return true;
             }
             catch (Exception exception)
             {
@@ -885,7 +891,8 @@ public sealed class HotfolderCoordinator : IDisposable
         if (_configuration.AutoPrint && inspectionError is null)
         {
             try { await PrintAsync(record.Id, cancellationToken,
-                record.AppliedTemplate?.MatchDisposition == TemplateMatchDisposition.Ambiguous).ConfigureAwait(false); }
+                record.AppliedTemplate?.MatchDisposition == TemplateMatchDisposition.Ambiguous,
+                requireReady: true).ConfigureAwait(false); }
             catch { /* The failed state is already recorded for the user. */ }
         }
     }
