@@ -12,7 +12,7 @@
   Windows 11 &nbsp;|&nbsp; Local processing &nbsp;|&nbsp; Zebra RAW ZPL &nbsp;|&nbsp; 203, 300, and 600 DPI
 </p>
 
-ReLabel watches a folder for PDF shipping labels, keeps the originals organized, produces a print-accurate preview, and sends optimized ZPL directly to an existing Zebra Windows queue. The current release is **2.4.5**.
+ReLabel watches a folder for PDF shipping labels, keeps the originals organized, produces a print-accurate preview, and sends optimized ZPL directly to an existing Zebra Windows queue. The current release is **2.4.6 - Print All**.
 
 ![A 4 x 6 source label passing through the ReLabel dashboard to produce a final 4 x 4 label](docs/images/relabel-dashboard.png)
 
@@ -143,7 +143,7 @@ Passing the quality test confirms basic communication and raster output. Carrier
 
 ## Install
 
-Download [ReLabel-Setup-2.4.5.exe](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.4.5/ReLabel-Setup-2.4.5.exe) from the [v2.4.5 release](https://github.com/NotSpookyGhost/ReLabel/releases/tag/v2.4.5). A [SHA-256 checksum file](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.4.5/ReLabel-Setup-2.4.5.exe.sha256) is included alongside the installer.
+Download [ReLabel-Setup-2.4.6.exe](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.4.6/ReLabel-Setup-2.4.6.exe) from the [v2.4.6 - Print All release](https://github.com/NotSpookyGhost/ReLabel/releases/tag/v2.4.6). A [SHA-256 checksum file](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.4.6/ReLabel-Setup-2.4.6.exe.sha256) is included alongside the installer.
 
 1. Copy the installer to the shipping workstation.
 2. Close ReLabel if it is running.
@@ -152,7 +152,7 @@ Download [ReLabel-Setup-2.4.5.exe](https://github.com/NotSpookyGhost/ReLabel/rel
 From PowerShell:
 
 ```powershell
-Start-Process .\ReLabel-Setup-2.4.5.exe -Verb RunAs
+Start-Process .\ReLabel-Setup-2.4.6.exe -Verb RunAs
 ```
 
 The installer includes the required Microsoft Visual C++ runtime and creates desktop and Start Menu shortcuts.
@@ -204,9 +204,11 @@ Incoming, Ready, Archive, and Printed must be separate, non-nested locations.
 
 ## Daily operation
 
-- Save a PDF into Incoming or click **Add PDF**.
+- Save a PDF into Incoming or drag one or more PDFs onto the ReLabel window. A highlighted drop area shows how many PDFs will be imported; original files remain untouched.
 - Select a Ready row to load the composed preview.
 - Click **Print** on the row or **Print Label** beside the preview.
+- Click **Print All** to print eligible Ready PDFs in the displayed order, including every page. Use **Stop After File** to finish the current PDF and stop the remaining batch.
+- Print All starts without confirmation by default. Enable **Settings > App Settings > Confirm before printing all labels** for a themed confirmation showing the total label count.
 - Use **Open PDF** to inspect the untouched original.
 - Use **Edit Label** to override size, fitting, rotation, barcode correction, address scaling, or template selection for one label.
 - Switch to Printed to reprint, verify, or delete a completed label.
@@ -284,7 +286,7 @@ Uninstalling removes ReLabel and its shortcuts while preserving user settings an
 
 ## Planned Features
 
-The following items describe the intended direction for future ReLabel releases. They are roadmap concepts, not capabilities included in version 2.4.5, and their final design may change after printer, carrier, and platform testing.
+The following items describe the intended direction for future ReLabel releases. They are roadmap concepts, not capabilities included in version 2.4.6, and their final design may change after printer, carrier, and platform testing.
 
 ### Wider label-size support
 
@@ -335,18 +337,18 @@ See the [2.4.5 release notes](RELEASE_NOTES_2.4.5.md) for upgrade guidance.
 
 ### Verify your download
 
-The initial v2.4.5 release installer was built and tested locally. It is **unsigned and not GitHub-attested**. To check that its download matches the supplied checksum, download both release assets into the same folder and run:
+The v2.4.6 release installer comes from the [Verified installer GitHub workflow](https://github.com/NotSpookyGhost/ReLabel/actions/workflows/release.yml) and has a **GitHub build attestation**. Download both release assets into the same folder and check them with:
 
 ```powershell
-$expected = ((Get-Content .\ReLabel-Setup-2.4.5.exe.sha256) -split '\s+')[0]
-$actual = (Get-FileHash .\ReLabel-Setup-2.4.5.exe -Algorithm SHA256).Hash
+$expected = ((Get-Content .\ReLabel-Setup-2.4.6.exe.sha256) -split '\s+')[0]
+$actual = (Get-FileHash .\ReLabel-Setup-2.4.6.exe -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw 'Installer checksum mismatch. Do not run this file.' }
 ```
 
-The release workflow generates free GitHub/Sigstore build attestations for installers built on GitHub. Those are separate workflow artifacts, not an attestation of the locally built release asset. For an installer downloaded from a successful **Verified installer** workflow, use:
+The release workflow generates free GitHub/Sigstore build attestations for installers built on GitHub. The v2.4.6 release EXE is the exact attested workflow artifact, not a locally rebuilt installer. With GitHub CLI installed, verify the release download using:
 
 ```powershell
-gh attestation verify .\ReLabel-Setup-2.4.5.exe --repo NotSpookyGhost/ReLabel
+gh attestation verify .\ReLabel-Setup-2.4.6.exe --repo NotSpookyGhost/ReLabel
 ```
 
 Attestations prove build provenance; they are **not Windows Authenticode signatures** and do not remove SmartScreen warnings. Locally built installers have a SHA-256 checksum but no GitHub attestation. A checksum alone does not authenticate a download. Free Windows code signing may be available through [SignPath Foundation](https://signpath.org/) after project approval; it is not yet configured for ReLabel.

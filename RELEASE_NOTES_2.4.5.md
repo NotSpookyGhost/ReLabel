@@ -16,7 +16,7 @@ Existing configuration and folder paths are preserved. Large PDFs may need to be
 - [Windows x64 installer](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.4.5/ReLabel-Setup-2.4.5.exe)
 - [SHA-256 checksum](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.4.5/ReLabel-Setup-2.4.5.exe.sha256)
 
-The initial release installer was built and tested locally. It is unsigned and has no GitHub build attestation; Windows SmartScreen may show a warning. The new GitHub workflow creates separately attested workflow artifacts. No paid signing service is required or configured.
+The release installer now comes from the [Verified installer workflow](https://github.com/NotSpookyGhost/ReLabel/actions/runs/41495300297) and has a verified GitHub build attestation for the v2.4.5 tag and source commit e1a30aa8544e8f1164c34d0f08058c23c9909f05. It replaces the earlier locally built installer; download the matching updated SHA-256 checksum. Windows Authenticode signing is still not configured, so SmartScreen may show a warning. No paid signing service is required.
 
 ## Validation
 

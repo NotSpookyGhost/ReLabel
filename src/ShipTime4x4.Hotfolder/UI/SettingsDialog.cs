@@ -24,6 +24,11 @@ public sealed class SettingsDialog : Form
     private readonly ComboBox _speed = new() { Dock = DockStyle.Left, DropDownStyle = ComboBoxStyle.DropDownList, Width = 190 };
     private readonly CheckBox _watch = new() { Text = "Watch for new PDF files", AutoSize = true };
     private readonly CheckBox _autoPrint = new() { Text = "Print automatically after import", AutoSize = true };
+    private readonly CheckBox _confirmPrintAll = new()
+    {
+        Text = "Confirm before printing all labels", AutoSize = true,
+        AccessibleName = "Print All confirmation"
+    };
     private readonly CheckBox _scannerVerification = new()
     {
         Text = "Ask for a USB barcode scan after printing", AutoSize = true
@@ -92,6 +97,9 @@ public sealed class SettingsDialog : Form
         _resolution.SelectedIndexChanged += (_, _) => RefreshPrintSpeeds(null);
         _watch.Checked = configuration.WatchEnabled;
         _autoPrint.Checked = configuration.AutoPrint;
+        _confirmPrintAll.Checked = configuration.ConfirmPrintAll;
+        _toolTips.SetToolTip(_confirmPrintAll,
+            "Ask before Print All starts. Off by default. The count includes every page of multi-page PDFs.");
         _scannerVerification.Checked = configuration.ScannerVerificationEnabled;
         _pdfMegabytes.Value = configuration.PdfLimits.MaximumFileMegabytes;
         _pdfPages.Value = configuration.PdfLimits.MaximumPages;
@@ -148,7 +156,7 @@ public sealed class SettingsDialog : Form
             Dock = DockStyle.Fill, Padding = new Padding(30, 28, 30, 20),
             FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true
         };
-        foreach (var option in new[] { _watch, _autoPrint, _scannerVerification })
+        foreach (var option in new[] { _watch, _autoPrint, _confirmPrintAll, _scannerVerification })
         {
             option.Font = new Font("Segoe UI", 10f);
             option.Margin = new Padding(0, 0, 0, 22);
@@ -276,6 +284,7 @@ public sealed class SettingsDialog : Form
         DefaultToAddressScalePercent = (int)_defaultToScale.Value,
         WatchEnabled = _watch.Checked,
         AutoPrint = _autoPrint.Checked,
+        ConfirmPrintAll = _confirmPrintAll.Checked,
         ScannerVerificationEnabled = _scannerVerification.Checked,
         PdfLimits = new PdfSafetyLimits
         {
