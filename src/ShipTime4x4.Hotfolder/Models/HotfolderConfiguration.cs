@@ -39,6 +39,7 @@ public sealed record HotfolderConfiguration
     public bool AutoPrint { get; init; }
     public bool WatchEnabled { get; init; } = true;
     public bool ScannerVerificationEnabled { get; init; }
+    public bool ConfirmPrintAll { get; init; }
     public PdfSafetyLimits PdfLimits { get; init; } = new();
 
     public void Validate()
