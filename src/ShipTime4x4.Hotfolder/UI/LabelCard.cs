@@ -15,6 +15,8 @@ public sealed class LabelCard : UserControl
     private readonly Label _status;
     private readonly Button _print;
     private readonly Button? _delete;
+    private bool _printingAllowed = true;
+    private bool _progressActive;
 
     public LabelCard(LabelRecord record, bool selected)
     {
@@ -109,11 +111,18 @@ public sealed class LabelCard : UserControl
     public void SetPrintProgress(string? message)
     {
         var active = !string.IsNullOrWhiteSpace(message);
+        _progressActive = active;
         _status.Text = active ? message : StatusText(Record);
         _status.BackColor = active ? Color.FromArgb(230, 246, 255) : StatusBackColor(Record);
         _status.ForeColor = active ? Color.FromArgb(24, 119, 180) : StatusForeColor(Record);
-        _print.Enabled = !active;
+        _print.Enabled = _printingAllowed && !active;
         LayoutFields();
+    }
+
+    public void SetPrintingAllowed(bool allowed)
+    {
+        _printingAllowed = allowed;
+        _print.Enabled = allowed && !_progressActive;
     }
 
     private void LayoutFields()
