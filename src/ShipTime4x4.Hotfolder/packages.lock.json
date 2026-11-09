@@ -4,9 +4,9 @@
     "net10.0-windows7.0": {
       "bblanchon.PDFium.Win32": {
         "type": "Direct",
-        "requested": "[158.0.8125, )",
-        "resolved": "158.0.8125",
-        "contentHash": "Nms+gFAZlPKpVb0oLVivumrvdLqC9i+J6uSKbPyqE2CsibcW/LQCQdUeGD36/BUBgJZuwy+ZVSskmwJJTizDjw=="
+        "requested": "[159.0.8138, )",
+        "resolved": "159.0.8138",
+        "contentHash": "mMghoG/dQ6s013eif9dmqzBIGKzNx0iReTdHjfDZDIWC/AuIo4XyiEGPDvP8aU0AanxJTJJoq/iK13oBzWkApQ=="
       },
       "PDFtoImage": {
         "type": "Direct",
@@ -96,9 +96,9 @@
     "net10.0-windows7.0/win-x64": {
       "bblanchon.PDFium.Win32": {
         "type": "Direct",
-        "requested": "[158.0.8125, )",
-        "resolved": "158.0.8125",
-        "contentHash": "Nms+gFAZlPKpVb0oLVivumrvdLqC9i+J6uSKbPyqE2CsibcW/LQCQdUeGD36/BUBgJZuwy+ZVSskmwJJTizDjw=="
+        "requested": "[159.0.8138, )",
+        "resolved": "159.0.8138",
+        "contentHash": "mMghoG/dQ6s013eif9dmqzBIGKzNx0iReTdHjfDZDIWC/AuIo4XyiEGPDvP8aU0AanxJTJJoq/iK13oBzWkApQ=="
       },
       "SkiaSharp.NativeAssets.Win32": {
         "type": "Direct",
