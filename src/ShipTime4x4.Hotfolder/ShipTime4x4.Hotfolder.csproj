@@ -18,7 +18,7 @@
     <PackageReference Include="PDFtoImage" Version="5.4.0" />
     <PackageReference Include="bblanchon.PDFium.Win32" Version="158.0.8125" />
     <PackageReference Include="SkiaSharp" Version="4.154.0" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.154.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.155.0" />
     <PackageReference Include="TesseractOCR" Version="5.5.2" />
   </ItemGroup>
   <ItemGroup>
