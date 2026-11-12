@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using ShipTime4x4.Core.Processing;
+using ShipTime4x4.Core.Printing;
 using ShipTime4x4.Core.Raster;
 using ShipTime4x4.Hotfolder.Models;
 
@@ -9,7 +10,7 @@ namespace ShipTime4x4.Hotfolder.Services;
 
 public sealed class PreparedLabelDiskCache
 {
-    private const int FormatVersion = 2;
+    private const int FormatVersion = 3;
     private readonly string _folder;
     private readonly object _gate = new();
 
@@ -56,8 +57,24 @@ public sealed class PreparedLabelDiskCache
                 var compensation = reader.ReadInt32();
                 var pageCount = reader.ReadInt32();
                 if (pageCount <= 0 || pageCount > 500) return false;
+                var pages = new List<MonochromePage>(pageCount);
+                long jobBytes = zplLength;
+                for (var index = 0; index < pageCount; index++)
+                {
+                    var pageWidth = reader.ReadInt32();
+                    var pageHeight = reader.ReadInt32();
+                    var length = reader.ReadInt32();
+                    if (pageWidth <= 0 || pageHeight <= 0 || pageWidth > 24000 || pageHeight > 24000 ||
+                        (long)pageWidth * pageHeight > 40_000_000 ||
+                        length != ((pageWidth + 7) / 8) * pageHeight) return false;
+                    jobBytes += length;
+                    if (jobBytes > PdfSafetyLimits.MaximumJobBytes) return false;
+                    var data = reader.ReadBytes(length);
+                    if (data.Length != length) return false;
+                    pages.Add(new MonochromePage(pageWidth, pageHeight, data));
+                }
                 prepared = new PreparedLabel(new GrayImage(width, height, pixels), zpl, fallback, warning,
-                    compensation, pageCount);
+                    compensation, pageCount) { PrintPages = pages };
             }
             File.SetLastAccessTimeUtc(path, DateTime.UtcNow);
             return true;
@@ -72,6 +89,10 @@ public sealed class PreparedLabelDiskCache
 
     public void Put(Guid labelId, string key, PreparedLabel prepared)
     {
+        var pages = prepared.GetPrintPages();
+        if (pages.Count > 500 ||
+            prepared.Zpl.Length + pages.Sum(page => (long)page.Data.Length) > PdfSafetyLimits.MaximumJobBytes)
+            throw new InvalidDataException("The prepared print job exceeds cache limits.");
         var path = PathFor(labelId, key);
         var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
         try
@@ -94,6 +115,13 @@ public sealed class PreparedLabelDiskCache
                     if (prepared.WarningCode is not null) writer.Write(prepared.WarningCode);
                     writer.Write(prepared.AppliedBarcodeCompensationDots);
                     writer.Write(prepared.PageCount);
+                    foreach (var page in pages)
+                    {
+                        writer.Write(page.Width);
+                        writer.Write(page.Height);
+                        writer.Write(page.Data.Length);
+                        writer.Write(page.Data);
+                    }
                 }
                 File.Move(temporary, path, true);
             }

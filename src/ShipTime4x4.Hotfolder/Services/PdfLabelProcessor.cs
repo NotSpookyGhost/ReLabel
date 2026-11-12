@@ -232,9 +232,13 @@ public sealed class PdfLabelProcessor
     public static PreparedLabel CombinePages(IReadOnlyList<PreparedLabel> pages)
     {
         if (pages.Count == 0) throw new InvalidOperationException("The PDF does not contain a label page.");
-        if (pages.Count == 1) return pages[0] with { PageCount = 1 };
+        if (pages.Count > 500) throw new InvalidDataException("The print job contains too many pages.");
+        var rasters = pages.SelectMany(page => page.GetPrintPages()).ToArray();
+        if (rasters.Length != pages.Count) throw new InvalidDataException("Expected one raster per PDF page.");
+        if (pages.Count == 1) return pages[0] with { PageCount = 1, PrintPages = rasters };
         var totalBytes = pages.Sum(page => (long)page.Zpl.Length);
-        if (totalBytes > PdfSafetyLimits.MaximumJobBytes) throw new InvalidDataException("The prepared print job exceeds 128 MB.");
+        if (totalBytes + rasters.Sum(page => (long)page.Data.Length) > PdfSafetyLimits.MaximumJobBytes)
+            throw new InvalidDataException("The prepared print job exceeds 128 MB.");
         var zpl = new byte[(int)totalBytes];
         var offset = 0;
         foreach (var page in pages)
@@ -247,15 +251,16 @@ public sealed class PdfLabelProcessor
             .Where(value => value is not null);
         return new PreparedLabel(pages[0].Image, zpl, pages.Any(page => page.UsedFallback),
             string.Join(",", warnings) is { Length: > 0 } warning ? warning : null,
-            pages.Max(page => page.AppliedBarcodeCompensationDots), pages.Count);
+            pages.Max(page => page.AppliedBarcodeCompensationDots), pages.Count) { PrintPages = rasters };
     }
 
     private static void AddPreparedPage(List<PreparedLabel> pages, PreparedLabel page, ref long bytes)
     {
-        bytes += page.Zpl.Length;
+        page = page with { PrintPages = page.GetPrintPages() };
+        bytes += page.Zpl.Length + page.PrintPages.Sum(raster => (long)raster.Data.Length);
         if (bytes > PdfSafetyLimits.MaximumJobBytes)
             throw new InvalidDataException("The prepared print job exceeds 128 MB. Split the shipment into smaller PDFs.");
-        // Only the first page is displayed. Release subsequent page rasters immediately.
+        // Retain packed one-bit pages for every output mode, but only one grayscale preview.
         pages.Add(pages.Count == 0 ? page : page with { Image = pages[0].Image });
     }
 

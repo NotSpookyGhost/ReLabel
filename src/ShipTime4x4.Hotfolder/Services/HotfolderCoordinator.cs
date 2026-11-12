@@ -15,6 +15,7 @@ public sealed class HotfolderCoordinator : IDisposable
     private readonly LabelCatalog _catalog;
     private readonly PdfLabelProcessor _processor;
     private readonly IRawPrinterClient _printer;
+    private readonly LabelPrinter _labelPrinter;
     private readonly IPrinterStatusProvider? _printerStatusProvider;
     private readonly AuditLog _audit;
     private readonly PreparedLabelDiskCache _diskCache;
@@ -50,6 +51,7 @@ public sealed class HotfolderCoordinator : IDisposable
         _catalog = new LabelCatalog(dataFolder);
         _processor = new PdfLabelProcessor(applicationFolder);
         _printer = printer ?? new RawPrinterClient();
+        _labelPrinter = new LabelPrinter(_printer);
         _printerStatusProvider = _printer as IPrinterStatusProvider;
         _audit = new AuditLog(dataFolder);
         _diskCache = new PreparedLabelDiskCache(dataFolder);
@@ -192,19 +194,20 @@ public sealed class HotfolderCoordinator : IDisposable
             if (record is null) throw new InvalidOperationException("The selected label no longer exists.");
             if (requireReady && !File.Exists(record.SourcePath)) return false;
             var totalTimer = Stopwatch.StartNew();
+            var printConfiguration = _configuration;
             try
             {
                 ReportPrintProgress(record, record.PageCount > 1
                     ? $"Preparing {record.PageCount} labels..." : "Preparing label...");
                 var preparedResult = await GetPreparedAsync(record, applyRotation: true, cancellationToken,
-                    ignoreTemplate)
+                    ignoreTemplate, printConfiguration)
                     .ConfigureAwait(false);
                 var prepared = preparedResult.Label;
                 ReportPrintProgress(record, record.PageCount > 1
                     ? $"Sending {record.PageCount} labels to printer..." : "Sending to printer...");
                 var spoolTimer = Stopwatch.StartNew();
-                await Task.Run(() => _printer.Print(_configuration.PhysicalPrinterQueue,
-                    $"ReLabel - {record.ShipToName}", prepared.Zpl), cancellationToken).ConfigureAwait(false);
+                await Task.Run(() => _labelPrinter.Print(printConfiguration,
+                    $"ReLabel - {record.ShipToName}", prepared), cancellationToken).ConfigureAwait(false);
                 spoolTimer.Stop();
                 ReportPrintProgress(record, record.PageCount > 1
                     ? $"Finalizing {record.PageCount} printed labels..." : "Finalizing printed label...");
@@ -239,14 +242,15 @@ public sealed class HotfolderCoordinator : IDisposable
                 finalizeTimer.Stop();
                 totalTimer.Stop();
                 _audit.Write("Print", record.Id, record.OriginalFileName, "Success",
-                    $"Pages={prepared.PageCount}; LabelDarkness={_configuration.PrintDarkness:0.0}; " +
+                    $"Pages={prepared.PageCount}; Output={printConfiguration.PrinterOutput}; " +
+                    $"ZplDarkness={(printConfiguration.PrinterOutput == ShipTime4x4.Core.Printing.PrinterOutputMode.Zpl ? printConfiguration.PrintDarkness.ToString("0.0", CultureInfo.InvariantCulture) : "Not applied")}; " +
                     $"BarcodeCompensationRequested={(int)record.BarcodeCompensation}dot; " +
                     $"BarcodeCompensationApplied={prepared.AppliedBarcodeCompensationDots}dot" +
                     (prepared.UsedFallback ? $"; Fallback={prepared.WarningCode}" : string.Empty));
                 _audit.Write("Performance", record.Id, record.OriginalFileName, "Print",
                     $"Cache={preparedResult.Source}; PrepareMs={preparedResult.DurationMs}; " +
                     $"SpoolSubmitMs={spoolTimer.ElapsedMilliseconds}; FinalizeMs={finalizeTimer.ElapsedMilliseconds}; " +
-                    $"TotalMs={totalTimer.ElapsedMilliseconds}; ZplBytes={prepared.Zpl.Length}");
+                    $"TotalMs={totalTimer.ElapsedMilliseconds}; Output={printConfiguration.PrinterOutput}");
                 Report(record.PageCount > 1
                     ? $"Printed {record.PageCount} labels from {record.OriginalFileName}"
                     : $"Printed {record.OriginalFileName}");
@@ -281,7 +285,15 @@ public sealed class HotfolderCoordinator : IDisposable
     {
         settings.Validate();
         if (string.IsNullOrWhiteSpace(settings.PhysicalPrinterQueue))
-            throw new InvalidOperationException("Select the physical Zebra printer first.");
+            throw new InvalidOperationException("Select the printer first.");
+        if (settings.PrinterOutput != ShipTime4x4.Core.Printing.PrinterOutputMode.Zpl)
+        {
+            _labelPrinter.Print(settings, "ReLabel - Print Quality Test", CalibrationLabelBuilder.Create(settings.PrintResolutionDpi));
+            _audit.Write("QualityTest", null, null, "Success",
+                $"Output={settings.PrinterOutput}; Dpi={settings.PrintResolutionDpi}");
+            Report("Printed the ReLabel quality test");
+            return;
+        }
         var dpi = settings.PrintResolutionDpi;
         var width = dpi * 4;
         var height = dpi * 4;
@@ -977,11 +989,11 @@ public sealed class HotfolderCoordinator : IDisposable
     private void Report(string message) => ActivityChanged?.Invoke(this, message);
 
     private async Task<CachedPreparedLabel> GetPreparedAsync(LabelRecord record, bool applyRotation,
-        CancellationToken cancellationToken, bool ignoreTemplate = false)
+        CancellationToken cancellationToken, bool ignoreTemplate = false, HotfolderConfiguration? settings = null)
     {
-        var key = PreparationKey(record, applyRotation, ignoreTemplate);
+        var configuration = settings ?? _configuration;
+        var key = PreparationKey(record, applyRotation, ignoreTemplate, configuration);
         var existed = _preparedCache.TryGetValue(key, out var existing);
-        var configuration = _configuration;
         var lazy = existing ?? _preparedCache.GetOrAdd(key, _ => new Lazy<Task<CachedPreparedLabel>>(() => Task.Run(async () =>
         {
             await _preparationGate.WaitAsync(_stopping.Token).ConfigureAwait(false);
@@ -1015,19 +1027,21 @@ public sealed class HotfolderCoordinator : IDisposable
         }
     }
 
-    private string PreparationKey(LabelRecord record, bool applyRotation, bool ignoreTemplate = false)
+    private string PreparationKey(LabelRecord record, bool applyRotation, bool ignoreTemplate = false,
+        HotfolderConfiguration? settings = null)
     {
+        var configuration = settings ?? _configuration;
         var info = new FileInfo(record.ArchivePath);
         var rotation = applyRotation ? record.Rotation : LabelRotation.None;
         var compensation = applyRotation ? record.BarcodeCompensation : RotatedBarcodeCompensation.Off;
         return string.Join('|', record.Id, info.Exists ? info.Length : 0,
-            info.Exists ? info.LastWriteTimeUtc.Ticks : 0, _configuration.PrintResolutionDpi,
-            _configuration.MarginInches, _configuration.PrintQuality, _configuration.PrintDarkness,
-            _configuration.PrintSpeedIps, record.OutputWidthInches, record.OutputHeightInches,
+            info.Exists ? info.LastWriteTimeUtc.Ticks : 0, configuration.PrintResolutionDpi,
+            configuration.MarginInches, configuration.PrintQuality, configuration.PrintDarkness,
+            configuration.PrintSpeedIps, record.OutputWidthInches, record.OutputHeightInches,
             record.FitMode, rotation, compensation, record.TextEnhancement,
             record.EffectiveFromAddressScalePercent, record.EffectiveToAddressScalePercent,
             ignoreTemplate ? "no-template" : record.AppliedTemplate?.Hash ?? "no-template",
-            _configuration.PdfLimits, "cache-v8");
+            configuration.PdfLimits, "cache-v9");
     }
 
     private void TrimPreparedCache(string currentKey)

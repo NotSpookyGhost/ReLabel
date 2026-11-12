@@ -20,7 +20,7 @@ public sealed class RawPrinterClient : IRawPrinterClient, IPrinterStatusProvider
     public void Print(string printerName, string documentName, ReadOnlySpan<byte> data)
     {
         if (string.IsNullOrWhiteSpace(printerName))
-            throw new InvalidOperationException("Select a physical Zebra printer queue first.");
+            throw new InvalidOperationException("Select a printer queue first.");
         if (!OpenPrinter(printerName, out var handle, nint.Zero))
             ThrowWin32("Unable to open the selected printer queue");
         try
@@ -36,7 +36,7 @@ public sealed class RawPrinterClient : IRawPrinterClient, IPrinterStatusProvider
                 {
                     var buffer = data.ToArray();
                     if (!WritePrinter(handle, buffer, buffer.Length, out var written) || written != buffer.Length)
-                        ThrowWin32("The Zebra queue did not accept the complete label");
+                        ThrowWin32("The printer queue did not accept the complete label");
                 }
                 finally { EndPagePrinter(handle); }
             }

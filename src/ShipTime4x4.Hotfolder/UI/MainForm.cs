@@ -34,7 +34,7 @@ public sealed class MainForm : Form
     private readonly Button _print = new();
     private readonly Button _openPdf = new();
     private readonly Button _labelSettings = new();
-    private readonly Label _empty = new();
+    private readonly EmptyLabelState _empty = new();
     private readonly Label _printerStatus = new();
     private readonly ToolTip _toolTips = new();
     private readonly PdfDropOverlay _dropOverlay = new();
@@ -100,7 +100,7 @@ public sealed class MainForm : Form
             Image = LoadBrandImage(), BackColor = Color.Transparent
         };
         var version = typeof(MainForm).Assembly.GetName().Version;
-        var versionText = version is null ? "Version 2.4.6" : $"Version {version.Major}.{version.Minor}.{version.Build}";
+        var versionText = version is null ? "Version 2.5.0" : $"Version {version.Major}.{version.Minor}.{version.Build}";
         var brandText = new BrandTextControl(versionText)
         {
             Location = new Point(72, 3), Size = new Size(260, 66), BackColor = Color.Transparent
@@ -203,12 +203,9 @@ public sealed class MainForm : Form
         _cards.BackColor = Canvas;
         _cards.Padding = new Padding(0, 2, 8, 10);
         _cards.Resize += (_, _) => ResizeCards();
-        _empty.Text = "No labels here yet\n\nDrag and drop PDF files anywhere in ReLabel to add labels.\nPDFs placed in Incoming will also appear automatically.";
-        _empty.ForeColor = Muted;
-        _empty.Font = new Font("Segoe UI", 11f);
-        _empty.TextAlign = ContentAlignment.MiddleCenter;
         _empty.Dock = DockStyle.Fill;
         _empty.Visible = false;
+        _empty.ImportRequested += async (_, _) => await ChoosePdfFilesAsync();
         listHost.Controls.Add(_empty);
         listHost.Controls.Add(_cards);
 
@@ -549,6 +546,7 @@ public sealed class MainForm : Form
         _print.Enabled = available && SelectedLabel is not null;
         _labelSettings.Enabled = available && SelectedLabel is not null;
         _settings.Enabled = available && !_dropImportActive;
+        _empty.ImportEnabled = !_dropImportActive;
         foreach (var card in _cards.Controls.OfType<LabelCard>())
             card.SetPrintingAllowed(available);
     }
@@ -681,7 +679,25 @@ public sealed class MainForm : Form
     {
         HideDropOverlay();
         if (_dropImportActive || (e.AllowedEffect & DragDropEffects.Copy) == 0) return;
-        var paths = DroppedPaths(e.Data).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        await ImportPdfFilesAsync(DroppedPaths(e.Data));
+    }
+
+    private async Task ChoosePdfFilesAsync()
+    {
+        if (_dropImportActive) return;
+        using var picker = new OpenFileDialog
+        {
+            Title = "Import PDF labels", Filter = "PDF files (*.pdf)|*.pdf",
+            Multiselect = true, CheckFileExists = true, RestoreDirectory = true
+        };
+        if (picker.ShowDialog(this) == DialogResult.OK)
+            await ImportPdfFilesAsync(picker.FileNames);
+    }
+
+    private async Task ImportPdfFilesAsync(IEnumerable<string> files)
+    {
+        if (_dropImportActive) return;
+        var paths = files.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var pdfs = paths.Where(PdfDropImport.IsPdfPath).ToArray();
         if (pdfs.Length == 0) return;
         _dropImportActive = true;

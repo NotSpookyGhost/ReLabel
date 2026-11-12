@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ShipTime4x4.Core.Processing;
+using ShipTime4x4.Core.Printing;
 
 namespace ShipTime4x4.Hotfolder.Models;
 
@@ -15,6 +16,14 @@ public sealed record HotfolderConfiguration
     public string PrintedFolder { get; init; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ReLabel", "Printed");
     public string PhysicalPrinterQueue { get; init; } = string.Empty;
+    public PrinterOutputMode PrinterOutput { get; init; } = PrinterOutputMode.Zpl;
+    public LabelMediaMode NativeMedia { get; init; } = LabelMediaMode.Gap;
+    public double NativeGapMillimeters { get; init; } = 3;
+    public bool NativeUsePrinterDefaults { get; init; } = true;
+    public int EplDensity { get; init; } = 8;
+    public int EplSpeed { get; init; } = 2;
+    public int TsplDensity { get; init; } = 8;
+    public double TsplSpeedIps { get; init; } = 4;
     public int PrintResolutionDpi { get; init; } = 203;
     public PrintQualityPreset PrintQuality { get; init; } = PrintQualityPreset.Standard;
     public double PrintDarkness { get; init; } = 10;
@@ -56,9 +65,18 @@ public sealed record HotfolderConfiguration
             throw new InvalidOperationException("The printed folder is required.");
         if (PrintResolutionDpi is not (203 or 300 or 600))
             throw new InvalidOperationException("Resolution must be 203, 300, or 600 dpi.");
+        if (!Enum.IsDefined(PrinterOutput) || !Enum.IsDefined(NativeMedia))
+            throw new InvalidOperationException("Select a supported output language and media type.");
+        if (PrinterOutput == PrinterOutputMode.Epl2 && PrintResolutionDpi == 600)
+            throw new InvalidOperationException("EPL2 output supports 203 or 300 DPI. Use a supported language or Windows driver for 600 DPI.");
+        if (!double.IsFinite(NativeGapMillimeters) || NativeGapMillimeters is < 0.1 or > 25)
+            throw new InvalidOperationException("Gap / black-mark length must be between 0.1 and 25 mm.");
+        if (EplDensity is < 0 or > 15 || TsplDensity is < 0 or > 15 ||
+            EplSpeed is < 1 or > 6 || !double.IsFinite(TsplSpeedIps) || TsplSpeedIps is < 1 or > 14)
+            throw new InvalidOperationException("Invalid native printer density or speed.");
         if (!Enum.IsDefined(PrintQuality))
             throw new InvalidOperationException("Select Fast, Standard, or High Quality.");
-        if (PrintDarkness is < 0 or > 30)
+        if (!double.IsFinite(PrintDarkness) || PrintDarkness is < 0 or > 30)
             throw new InvalidOperationException("Label darkness must be between 0 and 30.");
         if (!AllowedPrintSpeeds(PrintResolutionDpi).Any(speed => Math.Abs(speed - PrintSpeedIps) < 0.01))
             throw new InvalidOperationException($"Select a print speed supported at {PrintResolutionDpi} dpi.");
@@ -91,7 +109,7 @@ public sealed record HotfolderConfiguration
             SamePath(ReadyFolder, ArchiveFolder))
             throw new InvalidOperationException("Incoming, Ready, Printed, and Archive must use different folders.");
         if (AutoPrint && string.IsNullOrWhiteSpace(PhysicalPrinterQueue))
-            throw new InvalidOperationException("Select a physical Zebra queue before enabling automatic printing.");
+            throw new InvalidOperationException("Select a printer queue before enabling automatic printing.");
     }
 
     private static bool PathsOverlap(string incoming, string archive)

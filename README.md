@@ -12,7 +12,9 @@
   Windows 11 &nbsp;|&nbsp; Local processing &nbsp;|&nbsp; Zebra RAW ZPL &nbsp;|&nbsp; 203, 300, and 600 DPI
 </p>
 
-ReLabel watches a folder for PDF shipping labels, keeps the originals organized, produces a print-accurate preview, and sends optimized ZPL directly to an existing Zebra Windows queue. The current release is **2.4.6 - Print All**.
+ReLabel watches a folder for PDF shipping labels, keeps the originals organized, produces a print-accurate preview, and prints through an installed Windows queue. The current release is **2.5.0 - Multi-printer Support**.
+
+Version **2.5.0** adds Windows-driver, EPL2, and TSPL output alongside ZPL. EPL2 and TSPL remain experimental, and the new modes have not yet been physically certified across printer models.
 
 ![A 4 x 6 source label passing through the ReLabel dashboard to produce a final 4 x 4 label](docs/images/relabel-dashboard.png)
 
@@ -91,8 +93,8 @@ Because Incoming can be shared over the local network, office staff can save lab
 | Requirement | Details |
 | --- | --- |
 | Operating system | 64-bit Windows 11 |
-| Printer | Zebra printer with an installed and working Windows queue |
-| Queue capability | Must accept RAW ZPL |
+| Printer | Installed, working Windows queue and media wide enough for the selected label |
+| Queue capability | RAW ZPL, EPL2, TSPL, or a manufacturer Windows driver |
 | Printhead selection | 200 in ReLabel uses the ZM400's native 203-DPI raster; 300 and 600 require matching hardware |
 | Input | PDF shipping labels from ShipTime or another shipping system, including multi-page files with one label per page |
 | Network use | Optional Windows folder share for the Incoming folder |
@@ -109,9 +111,28 @@ ReLabel is provided "as is" under the [MIT License](LICENSE). To the extent perm
 
 ## Printer Support
 
-ReLabel supports compatible **4-inch Zebra label printers that understand ZPL or ZPL II**. It does not depend on a particular connection type or printer network address; output is submitted as RAW ZPL through the selected Windows printer queue.
+Choose **Settings > Printer Settings > Output language**. USB, Ethernet, Wi-Fi, and print-server connections all use an installed Windows printer queue; there is no direct-IP transport or automatic language switching.
 
-### Supported configurations
+| Output mode | Intended compatibility path | Important limits |
+| --- | --- | --- |
+| ZPL / ZPL II | Existing Zebra printers and explicitly compatible emulations | Preserves existing output, darkness, speed, and banded graphics; 203/300/600 DPI |
+| EPL2 (experimental) | Legacy Zebra/Eltron and compatible EPL2 printers | Binary GW graphics; 203/300 DPI; not EPL1 line mode |
+| TSPL / TSPL2 (experimental) | TSC and explicitly TSPL-compatible printers | Binary BITMAP graphics; 203/300/600 DPI, subject to model support |
+| Windows driver | Potential route for Brother, DYMO, Rollo, MUNBYN, Honeywell, SATO, Citizen, Toshiba, and other manufacturers | Requires a working vendor driver accepting the selected size and resolution; manufacturer names are not a claim that every model is supported |
+
+No new physical models are certified by this update. Check the exact model, firmware, enabled language, printable width, media, and resolution. Small tape, receipt, and narrow-label printers cannot print a 4-inch label merely because their manufacturer appears above.
+
+### Settings by output mode
+
+- **ZPL:** the existing 0-30 Label Darkness and resolution-specific speed controls remain unchanged. Existing installations stay on ZPL after upgrading.
+- **EPL2 / TSPL:** select gap, black-mark, or continuous media and enter the gap/mark length in millimeters. Density and speed remain at the printer's current settings by default. Optional native overrides use density 0-15; EPL speed is a model-specific **code**, while TSPL speed is in inches/sec. Do not treat these as conversions from Zebra darkness/speed. Overrides may persist in printer firmware.
+- **Windows driver:** configure label stock, density/darkness, speed, and DPI in Windows **Printing preferences**. ReLabel sends monochrome graphics at the composed physical size, without ZPL commands. It checks driver-reported size, resolution, and printable area and refuses detected clipping instead of silently shrinking the label. Driver-specific internal scaling must also be disabled.
+- Multi-page PDFs retain every page, in order, for all four modes, including cached reprints.
+- The dashboard reports Windows queue status, not guaranteed live device telemetry. A successful spool submission does not prove a physical print or scan.
+
+Protocol references: [Zebra EPL programming guide](https://www.zebra.com/content/dam/support-dam/en/documentation/unrestricted/guide/software/epl2-pm-en.pdf), [TSC TSPL/TSPL2 programming manual](https://fs.tscprinters.com/en/dl/1/2541), and [Microsoft PrintDocument](https://learn.microsoft.com/en-us/dotnet/api/system.drawing.printing.printdocument?view=windowsdesktop-10.0).
+
+### Existing ZPL compatibility
 
 - Zebra printers with ZPL/ZPL II support, including the **^GFA** graphic command.
 - Physical printheads at 203, 300, or 600 DPI. The **200** option in ReLabel represents Zebra's native 203-DPI resolution.
@@ -122,20 +143,20 @@ ReLabel supports compatible **4-inch Zebra label printers that understand ZPL or
 
 The Zebra ZM400 is supported when its installed printhead resolution matches the DPI selected in ReLabel. Many ZD- and ZT-series label printers should also work when configured for ZPL, but each physical model and printhead combination must be tested before production use.
 
-### Not currently supported
+### Remaining limitations
 
-- Zebra card, receipt, document, or kiosk printers that do not accept ZPL label output.
-- EPL-only or CPCL-only printers.
+- Native CPCL, ESC/POS, Brother raster, SATO SBPL, Honeywell IPL/DPL, and Toshiba TPCL encoders are not implemented. A suitable Windows driver or explicitly supported emulation may provide a compatibility route.
+- EPL1 line mode and printers with no compatible Windows driver or supported native language.
 - Narrow mobile printers that cannot load 4-inch media.
 - Printhead resolutions other than 203, 300, or 600 DPI.
-- Windows queues that render, translate, or otherwise alter RAW ZPL data.
+- Windows queues that alter RAW native data must use Windows-driver mode instead.
 - Direct printing to an IP address without an installed Windows printer queue.
 
 ### Validate a new printer
 
-1. Install the official Zebra/ZDesigner driver and confirm its Windows test page or Zebra test label prints.
-2. Confirm the queue accepts RAW ZPL and that the printer is operating in ZPL mode.
-3. Select the printer's physical printhead resolution in ReLabel.
+1. Install the manufacturer's Windows driver and confirm its own test label prints.
+2. Select the correct output mode. Native modes require the printer to be configured for that exact language; use Windows driver if unsure.
+3. Match ReLabel's DPI and label size to the hardware and loaded media. For EPL2/TSPL, also match the gap/black-mark settings; for driver mode, set matching stock and DPI in Printing preferences.
 4. Open **Label Defaults** and run **Print Quality Test**.
 5. Print and scan a representative label at the intended darkness, speed, rotation, and media size.
 
@@ -143,7 +164,7 @@ Passing the quality test confirms basic communication and raster output. Carrier
 
 ## Install
 
-Download [ReLabel-Setup-2.4.6.exe](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.4.6/ReLabel-Setup-2.4.6.exe) from the [v2.4.6 - Print All release](https://github.com/NotSpookyGhost/ReLabel/releases/tag/v2.4.6). A [SHA-256 checksum file](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.4.6/ReLabel-Setup-2.4.6.exe.sha256) is included alongside the installer.
+Download [ReLabel-Setup-2.5.0.exe](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.5.0/ReLabel-Setup-2.5.0.exe) from the [v2.5.0 - Multi-printer Support release](https://github.com/NotSpookyGhost/ReLabel/releases/tag/v2.5.0). A [SHA-256 checksum file](https://github.com/NotSpookyGhost/ReLabel/releases/download/v2.5.0/ReLabel-Setup-2.5.0.exe.sha256) is included alongside the installer.
 
 1. Copy the installer to the shipping workstation.
 2. Close ReLabel if it is running.
@@ -152,7 +173,7 @@ Download [ReLabel-Setup-2.4.6.exe](https://github.com/NotSpookyGhost/ReLabel/rel
 From PowerShell:
 
 ```powershell
-Start-Process .\ReLabel-Setup-2.4.6.exe -Verb RunAs
+Start-Process .\ReLabel-Setup-2.5.0.exe -Verb RunAs
 ```
 
 The installer includes the required Microsoft Visual C++ runtime and creates desktop and Start Menu shortcuts.
@@ -167,7 +188,8 @@ Open the gear icon in the upper-right corner.
 
 ### Printer Settings
 
-- **Zebra printer:** Select the existing ZDesigner or Zebra queue.
+- **Printer:** Select the installed Windows printer queue.
+- **Output language:** ZPL, Windows driver, EPL2, or TSPL. See [Printer Support](#printer-support) for compatibility and mode-specific controls.
 - **Print resolution:** Select 200 for a 203-DPI ZM400 printhead, or 300/600 only for matching hardware.
 - **Print quality:** Fast minimizes preparation time, Standard balances clarity and speed, and High Quality renders PDF vectors at 600 DPI before downsampling.
 - **Label darkness:** Sets Zebra's physical 0-30 darkness with ZPL `~SD`. This applies to the complete print job.
@@ -286,7 +308,7 @@ Uninstalling removes ReLabel and its shortcuts while preserving user settings an
 
 ## Planned Features
 
-The following items describe the intended direction for future ReLabel releases. They are roadmap concepts, not capabilities included in version 2.4.6, and their final design may change after printer, carrier, and platform testing.
+The following items describe the intended direction for future ReLabel releases. They are roadmap concepts, not capabilities included in version 2.5.0, and their final design may change after printer, carrier, and platform testing.
 
 ### Wider label-size support
 
@@ -337,18 +359,18 @@ See the [2.4.5 release notes](RELEASE_NOTES_2.4.5.md) for upgrade guidance.
 
 ### Verify your download
 
-The v2.4.6 release installer comes from the [Verified installer GitHub workflow](https://github.com/NotSpookyGhost/ReLabel/actions/workflows/release.yml) and has a **GitHub build attestation**. Download both release assets into the same folder and check them with:
+The v2.5.0 release installer comes from the [Verified installer GitHub workflow](https://github.com/NotSpookyGhost/ReLabel/actions/workflows/release.yml) and has a **GitHub build attestation**. Download both release assets into the same folder and check them with:
 
 ```powershell
-$expected = ((Get-Content .\ReLabel-Setup-2.4.6.exe.sha256) -split '\s+')[0]
-$actual = (Get-FileHash .\ReLabel-Setup-2.4.6.exe -Algorithm SHA256).Hash
+$expected = ((Get-Content .\ReLabel-Setup-2.5.0.exe.sha256) -split '\s+')[0]
+$actual = (Get-FileHash .\ReLabel-Setup-2.5.0.exe -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw 'Installer checksum mismatch. Do not run this file.' }
 ```
 
-The release workflow generates free GitHub/Sigstore build attestations for installers built on GitHub. The v2.4.6 release EXE is the exact attested workflow artifact, not a locally rebuilt installer. With GitHub CLI installed, verify the release download using:
+The release workflow generates free GitHub/Sigstore build attestations for installers built on GitHub. The v2.5.0 release EXE is the exact attested workflow artifact, not a locally rebuilt installer. With GitHub CLI installed, verify the release download using:
 
 ```powershell
-gh attestation verify .\ReLabel-Setup-2.4.6.exe --repo NotSpookyGhost/ReLabel
+gh attestation verify .\ReLabel-Setup-2.5.0.exe --repo NotSpookyGhost/ReLabel
 ```
 
 Attestations prove build provenance; they are **not Windows Authenticode signatures** and do not remove SmartScreen warnings. Locally built installers have a SHA-256 checksum but no GitHub attestation. A checksum alone does not authenticate a download. Free Windows code signing may be available through [SignPath Foundation](https://signpath.org/) after project approval; it is not yet configured for ReLabel.

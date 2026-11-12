@@ -8,8 +8,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>ReLabel</AssemblyName>
     <Product>ReLabel</Product>
-    <Version>2.4.6</Version>
-    <FileVersion>2.4.6.0</FileVersion>
+    <Version>2.5.0</Version>
+    <FileVersion>2.5.0.0</FileVersion>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>Assets\printer.ico</ApplicationIcon>
   </PropertyGroup>

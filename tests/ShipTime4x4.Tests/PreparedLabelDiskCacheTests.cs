@@ -15,7 +15,12 @@ public sealed class PreparedLabelDiskCacheTests : IDisposable
         var cache = new PreparedLabelDiskCache(_folder);
         var id = Guid.NewGuid();
         var expected = new PreparedLabel(new GrayImage(3, 2, [0, 255, 12, 42, 88, 190]),
-            [94, 88, 65, 10], true, "TEST", 4, 2);
+            [94, 88, 65, 10], true, "TEST", 4, 2)
+        {
+            PrintPages = [
+                new ShipTime4x4.Core.Printing.MonochromePage(3, 2, [0x80, 0x40]),
+                new ShipTime4x4.Core.Printing.MonochromePage(3, 2, [0x20, 0xe0])]
+        };
 
         cache.Put(id, "exact-key", expected);
 
@@ -26,6 +31,8 @@ public sealed class PreparedLabelDiskCacheTests : IDisposable
         Assert.Equal(expected.WarningCode, actual.WarningCode);
         Assert.Equal(expected.AppliedBarcodeCompensationDots, actual.AppliedBarcodeCompensationDots);
         Assert.Equal(expected.PageCount, actual.PageCount);
+        Assert.Equal(expected.PrintPages[0].Data, actual.PrintPages[0].Data);
+        Assert.Equal(expected.PrintPages[1].Data, actual.PrintPages[1].Data);
     }
 
     [Fact]
@@ -47,6 +54,25 @@ public sealed class PreparedLabelDiskCacheTests : IDisposable
     public void ScannerVerificationIsDisabledByDefault()
     {
         Assert.False(new HotfolderConfiguration().ScannerVerificationEnabled);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void OldOrTruncatedCacheIsAMissInsteadOfPrintingAnIncompleteShipment(int version)
+    {
+        var cache = new PreparedLabelDiskCache(_folder);
+        var id = Guid.NewGuid();
+        cache.Put(id, "bad", new PreparedLabel(GrayImage.White(8, 1), [1], false, null));
+        var path = Directory.GetFiles(Path.Combine(_folder, "PreparedCache"), "*.rlcache").Single();
+        using (var file = File.Create(path))
+        using (var compressed = new System.IO.Compression.DeflateStream(file, System.IO.Compression.CompressionLevel.Fastest))
+        using (var writer = new BinaryWriter(compressed))
+        {
+            writer.Write(version);
+            // Truncated deliberately: no allocation or partial-page print is permitted.
+        }
+        Assert.False(cache.TryGet(id, "bad", out _));
     }
 
     public void Dispose()

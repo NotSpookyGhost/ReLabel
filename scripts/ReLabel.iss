@@ -1,5 +1,5 @@
 #define MyAppName "ReLabel"
-#define MyAppVersion "2.4.6"
+#define MyAppVersion "2.5.0"
 #define MyAppPublisher "ReLabel"
 #define MyAppExeName "ReLabel.exe"
 
@@ -8,9 +8,9 @@ AppId={{5A435A63-CA6A-470A-A132-D589CE38B00F}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-VersionInfoVersion=2.4.6.0
+VersionInfoVersion=2.5.0.0
 VersionInfoProductName={#MyAppName}
-VersionInfoDescription=PDF hotfolder, 4x4 preview, and Zebra label printing
+VersionInfoDescription=PDF hotfolder, label preview, and multi-printer label printing
 DefaultDirName={autopf}\ReLabel
 DefaultGroupName=ReLabel
 DisableProgramGroupPage=yes

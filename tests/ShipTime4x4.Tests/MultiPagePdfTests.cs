@@ -45,6 +45,8 @@ public sealed class MultiPagePdfTests : IDisposable
 
         Assert.Equal(2, inspection.PageCount);
         Assert.Equal(2, prepared.PageCount);
+        Assert.Equal(2, prepared.PrintPages.Count);
+        Assert.False(prepared.PrintPages[0].Data.SequenceEqual(prepared.PrintPages[1].Data));
         Assert.Equal(2, Count(zpl, "^XA"));
         Assert.Equal(2, Count(zpl, "^XZ"));
         Assert.True(zpl.IndexOf("^XA", StringComparison.Ordinal) <

@@ -1,5 +1,6 @@
 using System.Drawing.Printing;
 using ShipTime4x4.Core.Processing;
+using ShipTime4x4.Core.Printing;
 using ShipTime4x4.Hotfolder.Models;
 using ShipTime4x4.Hotfolder.Services;
 
@@ -14,6 +15,16 @@ public sealed class SettingsDialog : Form
     private readonly TextBox _ready = new() { Dock = DockStyle.Fill };
     private readonly TextBox _printed = new() { Dock = DockStyle.Fill };
     private readonly ComboBox _printer = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly ComboBox _output = new() { DropDownStyle = ComboBoxStyle.DropDownList, AccessibleName = "Printer output language" };
+    private readonly ComboBox _media = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly NumericUpDown _gap = new() { Minimum = .1m, Maximum = 25, DecimalPlaces = 1, Increment = .1m };
+    private readonly CheckBox _nativeDefaults = new() { Text = "Use printer density / speed", AutoSize = true };
+    private readonly NumericUpDown _eplDensity = new() { Maximum = 15 };
+    private readonly NumericUpDown _eplSpeed = new() { Minimum = 1, Maximum = 6 };
+    private readonly NumericUpDown _tsplDensity = new() { Maximum = 15 };
+    private readonly NumericUpDown _tsplSpeed = new() { Minimum = 1, Maximum = 14, DecimalPlaces = 1, Increment = .5m };
+    private readonly TableLayoutPanel _printerGrid = SettingsGrid(14, 42);
+    private readonly Label _outputHelp = new() { AutoSize = false, ForeColor = Color.FromArgb(92, 104, 119) };
     private readonly ComboBox _resolution = new() { Dock = DockStyle.Left, DropDownStyle = ComboBoxStyle.DropDownList, Width = 190 };
     private readonly ComboBox _quality = new() { Dock = DockStyle.Left, DropDownStyle = ComboBoxStyle.DropDownList, Width = 190 };
     private readonly NumericUpDown _darkness = new()
@@ -87,6 +98,28 @@ public sealed class SettingsDialog : Form
         _ready.Text = configuration.ReadyFolder;
         _printed.Text = configuration.PrintedFolder;
         _printer.SelectedItem = configuration.PhysicalPrinterQueue;
+        _output.Items.AddRange([
+            new OutputItem(PrinterOutputMode.Zpl, "ZPL / ZPL II - Zebra and compatible"),
+            new OutputItem(PrinterOutputMode.WindowsDriver, "Windows driver - other manufacturers"),
+            new OutputItem(PrinterOutputMode.Epl2, "EPL2 - legacy / compatible printers"),
+            new OutputItem(PrinterOutputMode.Tspl, "TSPL / TSPL2 - TSC and compatible")
+        ]);
+        _output.SelectedItem = _output.Items.Cast<OutputItem>().First(item => item.Value == configuration.PrinterOutput);
+        _media.Items.AddRange([
+            new MediaItem(LabelMediaMode.Gap, "Gap / die-cut labels"),
+            new MediaItem(LabelMediaMode.BlackMark, "Black-mark labels"),
+            new MediaItem(LabelMediaMode.Continuous, "Continuous media")
+        ]);
+        _media.SelectedItem = _media.Items.Cast<MediaItem>().First(item => item.Value == configuration.NativeMedia);
+        _gap.Value = (decimal)configuration.NativeGapMillimeters;
+        _nativeDefaults.Checked = configuration.NativeUsePrinterDefaults;
+        _eplDensity.Value = configuration.EplDensity;
+        _eplSpeed.Value = configuration.EplSpeed;
+        _tsplDensity.Value = configuration.TsplDensity;
+        _tsplSpeed.Value = (decimal)configuration.TsplSpeedIps;
+        _toolTips.SetToolTip(_eplSpeed, "EPL S command speed code (1-6), not a universal inches/sec value. Check your printer manual.");
+        _toolTips.SetToolTip(_tsplSpeed, "Inches/sec. Supported values depend on the printer model and printhead. Leave printer defaults enabled unless verified.");
+        _toolTips.SetToolTip(_resolution, "Match your physical printhead. 200 represents 203 DPI; Windows drivers reporting 200 DPI are accepted.");
         _resolution.SelectedItem = _resolution.Items.Cast<ResolutionItem>()
             .First(x => x.Value == configuration.PrintResolutionDpi);
         _quality.SelectedItem = _quality.Items.Cast<QualityItem>()
@@ -142,13 +175,31 @@ public sealed class SettingsDialog : Form
         foldersPage.Controls.Add(foldersGrid);
 
         var printerPage = SettingsPage("Printer Settings");
-        var printerGrid = SettingsGrid(5);
-        AddRow(printerGrid, 0, "Zebra printer", _printer, null);
-        AddRow(printerGrid, 1, "Print resolution (DPI)", _resolution, null);
-        AddRow(printerGrid, 2, "Print quality", _quality, null);
-        AddRow(printerGrid, 3, "Label darkness (0-30)", _darkness, null);
-        AddRow(printerGrid, 4, "Print speed (in/sec)", _speed, null);
-        printerPage.Controls.Add(printerGrid);
+        var printerScroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        _printerGrid.Dock = DockStyle.Top;
+        _printerGrid.ColumnStyles[2].Width = 0;
+        AddRow(_printerGrid, 0, "Printer", _printer, null);
+        AddRow(_printerGrid, 1, "Output language", _output, null);
+        AddRow(_printerGrid, 2, "Print resolution (DPI)", _resolution, null);
+        AddRow(_printerGrid, 3, "Print quality", _quality, null);
+        AddRow(_printerGrid, 4, "Label darkness (0-30)", _darkness, null);
+        AddRow(_printerGrid, 5, "Print speed (in/sec)", _speed, null);
+        AddRow(_printerGrid, 6, "Native print controls", _nativeDefaults, null);
+        AddRow(_printerGrid, 7, "EPL density (0-15)", _eplDensity, null);
+        AddRow(_printerGrid, 8, "EPL speed code (1-6)", _eplSpeed, null);
+        AddRow(_printerGrid, 9, "TSPL density (0-15)", _tsplDensity, null);
+        AddRow(_printerGrid, 10, "TSPL speed (in/sec)", _tsplSpeed, null);
+        AddRow(_printerGrid, 11, "Media type", _media, null);
+        AddRow(_printerGrid, 12, "Gap / mark length (mm)", _gap, null);
+        _printerGrid.Controls.Add(_outputHelp, 0, 13);
+        _printerGrid.SetColumnSpan(_outputHelp, 3);
+        _outputHelp.Dock = DockStyle.Fill;
+        printerScroll.Controls.Add(_printerGrid);
+        printerPage.Controls.Add(printerScroll);
+        _output.SelectedIndexChanged += (_, _) => RefreshPrinterControls();
+        _nativeDefaults.CheckedChanged += (_, _) => RefreshPrinterControls();
+        _media.SelectedIndexChanged += (_, _) => RefreshPrinterControls();
+        RefreshPrinterControls();
 
         var automationPage = SettingsPage("App Settings");
         var automation = new FlowLayoutPanel
@@ -269,6 +320,14 @@ public sealed class SettingsDialog : Form
         ReadyFolder = _ready.Text.Trim(),
         PrintedFolder = _printed.Text.Trim(),
         PhysicalPrinterQueue = _printer.SelectedItem?.ToString() ?? string.Empty,
+        PrinterOutput = (_output.SelectedItem as OutputItem)?.Value ?? PrinterOutputMode.Zpl,
+        NativeMedia = (_media.SelectedItem as MediaItem)?.Value ?? LabelMediaMode.Gap,
+        NativeGapMillimeters = (double)_gap.Value,
+        NativeUsePrinterDefaults = _nativeDefaults.Checked,
+        EplDensity = (int)_eplDensity.Value,
+        EplSpeed = (int)_eplSpeed.Value,
+        TsplDensity = (int)_tsplDensity.Value,
+        TsplSpeedIps = (double)_tsplSpeed.Value,
         PrintResolutionDpi = (_resolution.SelectedItem as ResolutionItem)?.Value ?? 203,
         PrintQuality = (_quality.SelectedItem as QualityItem)?.Value ?? PrintQualityPreset.Standard,
         PrintDarkness = (double)_darkness.Value,
@@ -320,6 +379,37 @@ public sealed class SettingsDialog : Form
         _speed.SelectedItem = _speed.Items.Cast<SpeedItem>()
             .OrderBy(item => current.HasValue ? Math.Abs(item.Value - current.Value) : Math.Abs(item.Value - 4))
             .First();
+    }
+
+    private void RefreshPrinterControls()
+    {
+        var mode = (_output.SelectedItem as OutputItem)?.Value ?? PrinterOutputMode.Zpl;
+        var native = mode is PrinterOutputMode.Epl2 or PrinterOutputMode.Tspl;
+        var scale = _printerGrid.DeviceDpi / 96f;
+        for (var row = 0; row < 14; row++)
+        {
+            var visible = row switch
+            {
+                4 or 5 => mode == PrinterOutputMode.Zpl,
+                6 or 11 or 12 => native,
+                7 or 8 => mode == PrinterOutputMode.Epl2,
+                9 or 10 => mode == PrinterOutputMode.Tspl,
+                _ => true
+            };
+            _printerGrid.RowStyles[row].Height = visible ? (row == 13 ? 100 : 42) * scale : 0;
+            foreach (Control control in _printerGrid.Controls)
+                if (_printerGrid.GetRow(control) == row) control.Visible = visible;
+        }
+        _printerGrid.Height = (int)_printerGrid.RowStyles.Cast<RowStyle>().Sum(row => row.Height) +
+            _printerGrid.Padding.Vertical + 4;
+        _eplDensity.Enabled = _eplSpeed.Enabled = _tsplDensity.Enabled = _tsplSpeed.Enabled = !_nativeDefaults.Checked;
+        _gap.Enabled = (_media.SelectedItem as MediaItem)?.Value != LabelMediaMode.Continuous;
+        _outputHelp.Text = mode switch
+        {
+            PrinterOutputMode.Zpl => "Uses RAW ZPL graphics. Select only a printer configured for ZPL / ZPL II. Existing Zebra darkness and speed settings are unchanged.",
+            PrinterOutputMode.WindowsDriver => "Uses the manufacturer's installed Windows driver at actual label size. Set the stock size, DPI, darkness and speed in Windows Printing preferences. No ZPL commands are sent. Requires matching printable width and resolution; print and scan a test before use.",
+            _ => "Experimental native output: the printer must be configured for this exact language. Match DPI, media and gap / mark length to the loaded stock. Density and speed use printer defaults unless unchecked; supported overrides vary by model. Print and scan a test before production use."
+        };
     }
 
     private void ConfigureDefaultEditors(HotfolderConfiguration configuration)
@@ -427,6 +517,8 @@ public sealed class SettingsDialog : Form
     {
         public override string ToString() => Label;
     }
+    private sealed record OutputItem(PrinterOutputMode Value, string Label) { public override string ToString() => Label; }
+    private sealed record MediaItem(LabelMediaMode Value, string Label) { public override string ToString() => Label; }
 
     private sealed record QualityItem(PrintQualityPreset Value, string Label)
     {

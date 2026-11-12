@@ -5,7 +5,18 @@ namespace ShipTime4x4.Core.Processing;
 
 public sealed record PipelineResult(byte[] Zpl, bool UsedFallback, string? WarningCode, int Width, int Height);
 public sealed record PreparedLabel(GrayImage Image, byte[] Zpl, bool UsedFallback, string? WarningCode,
-    int AppliedBarcodeCompensationDots = 0, int PageCount = 1);
+    int AppliedBarcodeCompensationDots = 0, int PageCount = 1)
+{
+    public IReadOnlyList<ShipTime4x4.Core.Printing.MonochromePage> PrintPages { get; init; } = [];
+
+    public IReadOnlyList<ShipTime4x4.Core.Printing.MonochromePage> GetPrintPages()
+    {
+        if (PrintPages.Count == PageCount && PageCount > 0) return PrintPages;
+        if (PrintPages.Count == 0 && PageCount == 1)
+            return [ShipTime4x4.Core.Printing.MonochromePage.FromImage(Image)];
+        throw new InvalidDataException("Print pages are missing. Reprepare the PDF before printing.");
+    }
+}
 
 public sealed class LabelPipeline
 {
